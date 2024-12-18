@@ -24,6 +24,7 @@ async fn main() -> Result<(), AnalysisError> {
 
     let mut regressed = 0;
     let mut e0658 = 0;
+    let mut e0658_in_git = 0;
     let mut no_space = 0;
     let mut linker_bus_error = 0;
     let mut results = BTreeSet::new();
@@ -42,8 +43,13 @@ async fn main() -> Result<(), AnalysisError> {
                         }
                     };
                     let mut has_reason = false;
-                    if log.contains("use of unstable library feature `rustc_encodable_decodable`") {
+                    if log.contains(
+                        "error[E0658]: use of unstable library feature `rustc_encodable_decodable`",
+                    ) {
                         e0658 += 1;
+                        if run.log.contains("/gh/") {
+                            e0658_in_git += 1;
+                        }
                         has_reason = true;
                     }
                     if log.contains("no space left on device") {
@@ -71,6 +77,7 @@ async fn main() -> Result<(), AnalysisError> {
         "E0658: {e0658}, no-space: {no_space}, linker-bus-error: {linker_bus_error}, sum: {}, other: {}",
         e0658 + no_space + linker_bus_error, other.len()
     );
+    println!("E0658 in Git: {e0658_in_git}");
     println!("{other:?}");
 
     Ok(())
