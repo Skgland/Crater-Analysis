@@ -14,7 +14,7 @@ async fn main() -> Result<(), AnalysisError> {
         .filter_level(log::LevelFilter::Info)
         .parse_default_env()
         .init();
-    let expriment = args().skip(1).next().unwrap();
+    let expriment = args().nth(1).unwrap();
 
     if let Err(err) = std::fs::create_dir_all(format!("./results/{expriment}/logs")) {
         log::warn!("Failed to ensure cache dir exists: {err}");
@@ -91,7 +91,7 @@ async fn main() -> Result<(), AnalysisError> {
 
 async fn get_log(experiment: &str, log: &str) -> Result<String, AnalysisError> {
     let log_folder = format!("./results/{experiment}/logs/{log}");
-    if let Err(err) = std::fs::create_dir_all(&&log_folder) {
+    if let Err(err) = std::fs::create_dir_all(&log_folder) {
         log::warn!("Failed to create cache folder: {err}");
     }
     let log_path = format!("{log_folder}/log.txt");
