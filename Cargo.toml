@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 env_logger = "0.11.5"
+indicatif = "0.17.9"
+indicatif-log-bridge = "0.2.3"
 log = "0.4.22"
 reqwest = "0.12.9"
 serde = { version = "1.0.216", features = ["derive"] }

@@ -1,5 +1,8 @@
 use std::{collections::BTreeSet, env::args, path::Path};
 
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif_log_bridge::LogWrapper;
+
 #[derive(thiserror::Error, Debug)]
 #[error("{0}")]
 enum AnalysisError {
@@ -10,10 +13,14 @@ enum AnalysisError {
 
 #[tokio::main]
 async fn main() -> Result<(), AnalysisError> {
-    env_logger::Builder::new()
+    let logger = env_logger::Builder::new()
         .filter_level(log::LevelFilter::Info)
         .parse_default_env()
-        .init();
+        .build();
+
+    let multi = MultiProgress::new();
+    LogWrapper::new(multi.clone(), logger).try_init().unwrap();
+
     let expriment = args().nth(1).unwrap();
 
     if let Err(err) = std::fs::create_dir_all(format!("./results/{expriment}/logs")) {
@@ -30,7 +37,10 @@ async fn main() -> Result<(), AnalysisError> {
     let mut ice = 0;
     let mut results = BTreeSet::new();
     let mut other = Vec::new();
+    let c_pg = multi.add(ProgressBar::new(report.crates.len() as u64));
+    c_pg.set_style(ProgressStyle::with_template("{wide_bar} {human_pos}/{human_len}").unwrap());
     for krate in &report.crates {
+        c_pg.inc(1);
         if krate.res == "regressed" {
             regressed += 1;
             for run in krate.runs.iter().flatten() {
@@ -76,6 +86,9 @@ async fn main() -> Result<(), AnalysisError> {
             }
         }
     }
+    c_pg.finish();
+
+
 
     println!("Regressed: {regressed}");
     println!("Run Results: {results:?}");
