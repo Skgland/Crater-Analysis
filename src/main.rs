@@ -3,7 +3,6 @@ use std::{collections::BTreeSet, env::args, path::Path, time::Duration};
 use futures::StreamExt as _;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use indicatif_log_bridge::LogWrapper;
-// use tokio_stream::StreamExt as _;
 
 #[derive(thiserror::Error, Debug)]
 #[error("{0}")]
@@ -64,7 +63,7 @@ async fn main() -> Result<(), AnalysisError> {
     let run_pb = multi.add(ProgressBar::new(unknown_runs.len() as u64).with_message("Processing logs"));
     run_pb.set_style(ProgressStyle::with_template("{msg} {wide_bar} {human_pos}/{human_len}").unwrap());
 
-    let mut stream = tokio_stream::iter(unknown_runs)
+    let mut stream = futures::stream::iter(unknown_runs)
         .map(|(krate_name, run)| {
             let expriment = &expriment;
             async move {
