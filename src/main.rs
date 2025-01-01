@@ -170,7 +170,7 @@ async fn get_or_download_file(
     cache_path: &Path,
     download_url: &str,
 ) -> Result<String, AnalysisError> {
-    let resuls = match std::fs::read_to_string(cache_path) {
+    let resuls = match tokio::fs::read_to_string(cache_path).await {
         Ok(content) => {
             log::info!("Using cached file");
             content
