@@ -1,7 +1,9 @@
-use std::{collections::BTreeSet, env::args, path::Path};
+use std::{collections::BTreeSet, env::args, path::Path, time::Duration};
 
+use futures::StreamExt as _;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use indicatif_log_bridge::LogWrapper;
+// use tokio_stream::StreamExt as _;
 
 #[derive(thiserror::Error, Debug)]
 #[error("{0}")]
@@ -27,9 +29,11 @@ async fn main() -> Result<(), AnalysisError> {
         log::warn!("Failed to ensure cache dir exists: {err}");
     }
 
+    let report_ps = multi.add(ProgressBar::new_spinner().with_message("Getting Crater Report"));
+    report_ps.enable_steady_tick(Duration::from_millis(100));
     let report = get_report(&expriment).await?;
+    report_ps.finish_and_clear();
 
-    let mut regressed = 0;
     let mut e0658 = 0;
     let mut e0658_in_git = 0;
     let mut no_space = 0;
@@ -37,60 +41,82 @@ async fn main() -> Result<(), AnalysisError> {
     let mut ice = 0;
     let mut results = BTreeSet::new();
     let mut other = Vec::new();
-    let c_pg = multi.add(ProgressBar::new(report.crates.len() as u64));
-    c_pg.set_style(ProgressStyle::with_template("{wide_bar} {human_pos}/{human_len}").unwrap());
-    for krate in &report.crates {
-        c_pg.inc(1);
-        if krate.res == "regressed" {
-            regressed += 1;
-            for run in krate.runs.iter().flatten() {
-                results.insert(&run.res);
-                if run.res == "build-fail:unknown" {
-                    let log = match get_log(&expriment, &run.log).await {
-                        Ok(log) => log,
-                        Err(err) => {
-                            log::warn!("Failed to get log '{}': {err}", run.log);
-                            continue;
-                        }
-                    };
-                    let mut has_reason = false;
-                    if log.contains(
-                        "error[E0658]: use of unstable library feature `rustc_encodable_decodable`",
-                    ) {
-                        e0658 += 1;
-                        if run.log.contains("/gh/") {
-                            e0658_in_git += 1;
-                        }
-                        has_reason = true;
-                    }
-                    if log.contains("no space left on device") {
-                        no_space += 1;
-                        has_reason = true;
-                    }
-                    if log
-                        .contains("collect2: fatal error: ld terminated with signal 7 [Bus error]")
-                    {
-                        linker_bus_error += 1;
-                        has_reason = true;
-                    }
 
-                    if log.contains("error: internal compiler error:"){
-                        ice += 1;
-                        has_reason = true;
-                    }
+    let regressed = report
+        .crates
+        .iter()
+        .filter(|krate| krate.res == "regressed")
+        .collect::<Vec<_>>();
+    let runs = regressed
+        .iter()
+        .flat_map(|krate| krate.runs.iter().flatten().map(|run| (&krate.name, run)))
+        .collect::<Vec<_>>();
 
-                    if !has_reason {
-                        other.push(&krate.name);
+    for (_, run) in &runs {
+        results.insert(&run.res);
+    }
+
+    let unknown_runs = runs
+        .into_iter()
+        .filter(|(_, run)| run.res == "build-fail:unknown")
+        .collect::<Vec<_>>();
+
+    let run_pb = multi.add(ProgressBar::new(unknown_runs.len() as u64));
+    run_pb.set_style(ProgressStyle::with_template("{wide_bar} {human_pos}/{human_len}").unwrap());
+
+    let mut stream = tokio_stream::iter(unknown_runs)
+        .map(|(krate_name, run)| {
+            let expriment = &expriment;
+            async move {
+                let log = get_log(expriment, &run.log).await;
+                (krate_name, run, log)
+            }
+        })
+        .buffer_unordered(10);
+
+    while let Some((krate_name, run, log)) = stream.next().await {
+        match log {
+            Ok(log) => {
+                let mut has_reason = false;
+                if log.contains(
+                    "error[E0658]: use of unstable library feature `rustc_encodable_decodable`",
+                ) {
+                    e0658 += 1;
+                    if run.log.contains("/gh/") {
+                        e0658_in_git += 1;
                     }
+                    has_reason = true;
+                }
+                if log.contains("no space left on device") {
+                    no_space += 1;
+                    has_reason = true;
+                }
+                if log.contains("collect2: fatal error: ld terminated with signal 7 [Bus error]") {
+                    linker_bus_error += 1;
+                    has_reason = true;
+                }
+
+                if log.contains("error: internal compiler error:") {
+                    ice += 1;
+                    has_reason = true;
+                }
+
+                if !has_reason {
+                    other.push(krate_name);
                 }
             }
+
+            Err(err) => {
+                log::warn!("Failed to get log '{}': {err}", run.log);
+            }
         }
+
+        run_pb.inc(1);
     }
-    c_pg.finish();
 
+    run_pb.finish();
 
-
-    println!("Regressed: {regressed}");
+    println!("Regressed: {}", regressed.len());
     println!("Run Results: {results:?}");
     println!(
         "E0658: {e0658}, no-space: {no_space}, linker-bus-error: {linker_bus_error}, ice: {ice}, sum: {}, other: {}",
@@ -121,6 +147,7 @@ struct Results {
 #[derive(serde::Deserialize, Debug)]
 struct CrateResult {
     name: String,
+    #[allow(dead_code)]
     url: Option<String>,
     res: String,
     runs: Vec<Option<RunResult>>,
@@ -160,7 +187,9 @@ async fn get_or_download_file(
                 "no-parent".to_string()
             };
 
-            log::info!("Failed to access cached resuls for {entry}, falling back to downloading: {err}");
+            log::info!(
+                "Failed to access cached resuls for {entry}, falling back to downloading: {err}"
+            );
             let response = reqwest::get(download_url).await?;
             let content = response.text().await?;
             if let Err(err) = std::fs::write(cache_path, &content) {
