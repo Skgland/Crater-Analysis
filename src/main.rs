@@ -1,4 +1,4 @@
-use std::{collections::{BTreeMap, BTreeSet}, env::args, path::Path, time::Duration};
+use std::{collections::BTreeMap, env::args, path::Path, time::Duration};
 
 use futures::StreamExt as _;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -24,16 +24,19 @@ async fn main() -> Result<(), AnalysisError> {
 
     let expriment = args().nth(1).unwrap();
 
-    if let Err(err) = std::fs::create_dir_all(format!("./results/{expriment}/logs")) {
+    run_analysis(&expriment, multi).await
+}
+
+async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), AnalysisError> {
+    if let Err(err) = std::fs::create_dir_all(format!("./results/{experiment}/logs")) {
         log::warn!("Failed to ensure cache dir exists: {err}");
     }
 
     let report_ps = multi.add(ProgressBar::new_spinner().with_message("Getting Crater Report"));
     report_ps.enable_steady_tick(Duration::from_millis(100));
-    let report = get_report(&expriment).await?;
+    let report = get_report(experiment).await?;
     report_ps.finish_and_clear();
 
-    let mut results = BTreeSet::new();
     let mut other = Vec::new();
 
     let regressed = report
@@ -41,28 +44,24 @@ async fn main() -> Result<(), AnalysisError> {
         .iter()
         .filter(|krate| krate.res == "regressed")
         .collect::<Vec<_>>();
-    let runs = regressed
+
+    let unknown_runs = regressed
         .iter()
         .flat_map(|krate| krate.runs.iter().flatten().map(|run| (&krate.name, run)))
-        .collect::<Vec<_>>();
-
-    for (_, run) in &runs {
-        results.insert(&run.res);
-    }
-
-    let unknown_runs = runs
-        .into_iter()
         .filter(|(_, run)| run.res == "build-fail:unknown")
         .collect::<Vec<_>>();
 
-    let run_pb = multi.add(ProgressBar::new(unknown_runs.len() as u64).with_message("Processing logs"));
-    run_pb.set_style(ProgressStyle::with_template("{msg} {wide_bar} {human_pos}/{human_len}").unwrap());
+    let run_pb =
+        multi.add(ProgressBar::new(unknown_runs.len() as u64).with_message("Processing logs"));
+    run_pb.set_style(
+        ProgressStyle::with_template("{msg} {wide_bar} {human_pos}/{human_len}").unwrap(),
+    );
 
     let mut stream = futures::stream::iter(unknown_runs)
         .map(|(krate_name, run)| {
-            let expriment = &expriment;
+            let experiment = &experiment;
             async move {
-                let log = get_log(expriment, &run.log).await;
+                let log = get_log(experiment, &run.log).await;
                 (krate_name, run, log)
             }
         })
@@ -71,26 +70,48 @@ async fn main() -> Result<(), AnalysisError> {
     let targets = [
         ("E0277", "error[E0277]:"),
         ("E0308", "error[E0308]: mismatched types"),
-        ("E0422", "error[E0422]: cannot find struct, variant or union type"),
+        (
+            "E0422",
+            "error[E0422]: cannot find struct, variant or union type",
+        ),
         ("E0463", "error[E0463]: can't find crate for"),
         ("E0557", "error[E0557]: feature has been removed"),
         ("E0635", "error[E0635]: unknown feature"),
         ("E0685", "error[E0658]: use of unstable library feature"),
         ("compile_error!", "compile_error!"),
-        ("missing-env-var", "note: this error originates in the macro `env`"),
-        ("delimiter missmatch", "error: mismatched closing delimiter:"),
+        (
+            "missing-env-var",
+            "note: this error originates in the macro `env`",
+        ),
+        (
+            "delimiter missmatch",
+            "error: mismatched closing delimiter:",
+        ),
         ("no-space", "no space left on device"),
-        ("linker-bus-error", "collect2: fatal error: ld terminated with signal 7 [Bus error]"),
-        ("linker-undefined-symbol", "rust-lld: error: undefined symbol:"),
-        ("linker-missing-library", "rust-lld: error: unable to find library"),
-        ("include_str-missing-file", "note: this error originates in the macro `include_str`"),
-        ("include_bytes-missing-file", "note: this error originates in the macro `include_bytes`"),
-        ("ice", "error: internal compiler error:")
+        (
+            "linker-bus-error",
+            "collect2: fatal error: ld terminated with signal 7 [Bus error]",
+        ),
+        (
+            "linker-undefined-symbol",
+            "rust-lld: error: undefined symbol:",
+        ),
+        (
+            "linker-missing-library",
+            "rust-lld: error: unable to find library",
+        ),
+        (
+            "include_str-missing-file",
+            "note: this error originates in the macro `include_str`",
+        ),
+        (
+            "include_bytes-missing-file",
+            "note: this error originates in the macro `include_bytes`",
+        ),
+        ("ice", "error: internal compiler error:"),
     ];
 
-    let mut findings = BTreeMap::<_,usize>::new();
-
-
+    let mut findings = BTreeMap::<_, usize>::new();
 
     while let Some((krate_name, run, log)) = stream.next().await {
         match log {
@@ -120,12 +141,11 @@ async fn main() -> Result<(), AnalysisError> {
     run_pb.finish();
 
     println!("Regressed: {}", regressed.len());
-    println!("Run Results: {results:?}");
 
     for (&name, &count) in &findings {
         print!("{name}: {count}, ")
     }
-    let sum : usize = findings.values().sum();
+    let sum: usize = findings.values().sum();
     println!("sum: {sum}, others: {}", other.len());
 
     println!("{other:#?}");
