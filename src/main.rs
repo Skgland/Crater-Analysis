@@ -61,8 +61,8 @@ async fn main() -> Result<(), AnalysisError> {
         .filter(|(_, run)| run.res == "build-fail:unknown")
         .collect::<Vec<_>>();
 
-    let run_pb = multi.add(ProgressBar::new(unknown_runs.len() as u64));
-    run_pb.set_style(ProgressStyle::with_template("{wide_bar} {human_pos}/{human_len}").unwrap());
+    let run_pb = multi.add(ProgressBar::new(unknown_runs.len() as u64).with_message("Processing logs"));
+    run_pb.set_style(ProgressStyle::with_template("{msg} {wide_bar} {human_pos}/{human_len}").unwrap());
 
     let mut stream = tokio_stream::iter(unknown_runs)
         .map(|(krate_name, run)| {
@@ -72,7 +72,7 @@ async fn main() -> Result<(), AnalysisError> {
                 (krate_name, run, log)
             }
         })
-        .buffer_unordered(10);
+        .buffer_unordered(20);
 
     while let Some((krate_name, run, log)) = stream.next().await {
         match log {
@@ -192,7 +192,7 @@ async fn get_or_download_file(
             );
             let response = reqwest::get(download_url).await?;
             let content = response.text().await?;
-            if let Err(err) = std::fs::write(cache_path, &content) {
+            if let Err(err) = tokio::fs::write(cache_path, &content).await {
                 log::warn!("Failed to cache result to {cache_path:?}: {err}");
             }
             content
