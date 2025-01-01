@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, env::args, path::Path, time::Duration};
+use std::{collections::{BTreeMap, BTreeSet}, env::args, path::Path, time::Duration};
 
 use futures::StreamExt as _;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -33,11 +33,6 @@ async fn main() -> Result<(), AnalysisError> {
     let report = get_report(&expriment).await?;
     report_ps.finish_and_clear();
 
-    let mut e0658 = 0;
-    let mut e0658_in_git = 0;
-    let mut no_space = 0;
-    let mut linker_bus_error = 0;
-    let mut ice = 0;
     let mut results = BTreeSet::new();
     let mut other = Vec::new();
 
@@ -73,35 +68,44 @@ async fn main() -> Result<(), AnalysisError> {
         })
         .buffer_unordered(20);
 
+    let targets = [
+        ("E0277", "error[E0277]:"),
+        ("E0308", "error[E0308]: mismatched types"),
+        ("E0422", "error[E0422]: cannot find struct, variant or union type"),
+        ("E0463", "error[E0463]: can't find crate for"),
+        ("E0557", "error[E0557]: feature has been removed"),
+        ("E0635", "error[E0635]: unknown feature"),
+        ("E0685", "error[E0658]: use of unstable library feature"),
+        ("compile_error!", "compile_error!"),
+        ("missing-env-var", "note: this error originates in the macro `env`"),
+        ("delimiter missmatch", "error: mismatched closing delimiter:"),
+        ("no-space", "no space left on device"),
+        ("linker-bus-error", "collect2: fatal error: ld terminated with signal 7 [Bus error]"),
+        ("linker-undefined-symbol", "rust-lld: error: undefined symbol:"),
+        ("linker-missing-library", "rust-lld: error: unable to find library"),
+        ("include_str-missing-file", "note: this error originates in the macro `include_str`"),
+        ("include_bytes-missing-file", "note: this error originates in the macro `include_bytes`"),
+        ("ice", "error: internal compiler error:")
+    ];
+
+    let mut findings = BTreeMap::<_,usize>::new();
+
+
+
     while let Some((krate_name, run, log)) = stream.next().await {
         match log {
             Ok(log) => {
                 let mut has_reason = false;
-                if log.contains(
-                    "error[E0658]: use of unstable library feature `rustc_encodable_decodable`",
-                ) {
-                    e0658 += 1;
-                    if run.log.contains("/gh/") {
-                        e0658_in_git += 1;
-                    }
-                    has_reason = true;
-                }
-                if log.contains("no space left on device") {
-                    no_space += 1;
-                    has_reason = true;
-                }
-                if log.contains("collect2: fatal error: ld terminated with signal 7 [Bus error]") {
-                    linker_bus_error += 1;
-                    has_reason = true;
-                }
 
-                if log.contains("error: internal compiler error:") {
-                    ice += 1;
-                    has_reason = true;
+                for (target_name, target) in targets {
+                    if log.contains(target) {
+                        *findings.entry(target_name).or_default() += 1;
+                        has_reason = true;
+                    }
                 }
 
                 if !has_reason {
-                    other.push(krate_name);
+                    other.push((krate_name, &run.log));
                 }
             }
 
@@ -117,12 +121,14 @@ async fn main() -> Result<(), AnalysisError> {
 
     println!("Regressed: {}", regressed.len());
     println!("Run Results: {results:?}");
-    println!(
-        "E0658: {e0658}, no-space: {no_space}, linker-bus-error: {linker_bus_error}, ice: {ice}, sum: {}, other: {}",
-        e0658 + no_space + linker_bus_error + ice, other.len()
-    );
-    println!("E0658 in Git: {e0658_in_git}");
-    println!("{other:?}");
+
+    for (&name, &count) in &findings {
+        print!("{name}: {count}, ")
+    }
+    let sum : usize = findings.values().sum();
+    println!("sum: {sum}, others: {}", other.len());
+
+    println!("{other:#?}");
 
     Ok(())
 }
