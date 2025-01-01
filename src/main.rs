@@ -35,7 +35,7 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
     let report_ps = multi.add(ProgressBar::new_spinner().with_message("Getting Crater Report"));
     report_ps.enable_steady_tick(Duration::from_millis(100));
     let report = get_report(experiment).await?;
-    report_ps.finish_and_clear();
+    report_ps.set_message("Processing Crater Report");
 
     let mut other = Vec::new();
 
@@ -52,8 +52,11 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
         .filter(|(_, run)| run.res == "build-fail:unknown")
         .collect::<Vec<_>>();
 
+
+
+    let unknown_build_fail_results = unknown_runs.len();
     let run_pb =
-        multi.add(ProgressBar::new(unknown_runs.len() as u64).with_message("Processing logs"));
+        multi.add(ProgressBar::new(unknown_build_fail_results as u64).with_message("Processing logs"));
     run_pb.set_style(
         ProgressStyle::with_template("{msg} {wide_bar} {human_pos}/{human_len}").unwrap(),
     );
@@ -139,17 +142,24 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
         run_pb.inc(1);
     }
 
-    run_pb.finish();
+    run_pb.finish_with_message("Processed logs");
+    report_ps.finish_with_message("Processed Crated Report");
 
     println!("Regressed: {regressed_count}");
-
+    println!("build failed(unknown): {unknown_build_fail_results}");
+    println!("----------------------------------");
+    println!("Results:");
     for (&name, &count) in &findings {
-        print!("{name}: {count}, ")
+        println!("{name}: {count}")
     }
-    let sum: usize = findings.values().sum();
-    println!("sum: {sum}, others: {}", other.len());
 
+    let sum: usize = findings.values().sum();
+    println!("----------------------------------");
+    println!("sum: {sum}");
+    println!("others: {}", other.len());
+    println!("----------------------------------");
     println!("{other:#?}");
+
 
     Ok(())
 }
