@@ -39,14 +39,15 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
 
     let mut other = Vec::new();
 
-    let regressed = report
+    let mut regressed_count = 0;
+
+    let unknown_runs = report
         .crates
         .iter()
         .filter(|krate| krate.res == "regressed")
-        .collect::<Vec<_>>();
-
-    let unknown_runs = regressed
-        .iter()
+        .inspect(|_| {
+            regressed_count += 1;
+        })
         .flat_map(|krate| krate.runs.iter().flatten().map(|run| (&krate.name, run)))
         .filter(|(_, run)| run.res == "build-fail:unknown")
         .collect::<Vec<_>>();
@@ -140,7 +141,7 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
 
     run_pb.finish();
 
-    println!("Regressed: {}", regressed.len());
+    println!("Regressed: {regressed_count}");
 
     for (&name, &count) in &findings {
         print!("{name}: {count}, ")
