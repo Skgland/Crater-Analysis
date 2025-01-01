@@ -27,6 +27,7 @@ async fn main() -> Result<(), AnalysisError> {
     let mut e0658_in_git = 0;
     let mut no_space = 0;
     let mut linker_bus_error = 0;
+    let mut ice = 0;
     let mut results = BTreeSet::new();
     let mut other = Vec::new();
     for krate in &report.crates {
@@ -63,6 +64,11 @@ async fn main() -> Result<(), AnalysisError> {
                         has_reason = true;
                     }
 
+                    if log.contains("error: internal compiler error:"){
+                        ice += 1;
+                        has_reason = true;
+                    }
+
                     if !has_reason {
                         other.push(&krate.name);
                     }
@@ -74,8 +80,8 @@ async fn main() -> Result<(), AnalysisError> {
     println!("Regressed: {regressed}");
     println!("Run Results: {results:?}");
     println!(
-        "E0658: {e0658}, no-space: {no_space}, linker-bus-error: {linker_bus_error}, sum: {}, other: {}",
-        e0658 + no_space + linker_bus_error, other.len()
+        "E0658: {e0658}, no-space: {no_space}, linker-bus-error: {linker_bus_error}, ice: {ice}, sum: {}, other: {}",
+        e0658 + no_space + linker_bus_error + ice, other.len()
     );
     println!("E0658 in Git: {e0658_in_git}");
     println!("{other:?}");
