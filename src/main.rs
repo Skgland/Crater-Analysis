@@ -137,7 +137,17 @@ async fn get_or_download_file(
             content
         }
         Err(err) => {
-            log::info!("Failed to access cached resuls, falling back to downloading: {err}");
+            let entry = if let Some(parent) = cache_path.parent() {
+                if let Some(name) = parent.file_name() {
+                    name.to_string_lossy().into_owned()
+                } else {
+                    "parent-has-no-name".to_string()
+                }
+            } else {
+                "no-parent".to_string()
+            };
+
+            log::info!("Failed to access cached resuls for {entry}, falling back to downloading: {err}");
             let response = reqwest::get(download_url).await?;
             let content = response.text().await?;
             if let Err(err) = std::fs::write(cache_path, &content) {
