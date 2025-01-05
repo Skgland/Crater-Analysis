@@ -52,11 +52,9 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
         .filter(|(_, run)| run.res == "build-fail:unknown")
         .collect::<Vec<_>>();
 
-
-
     let unknown_build_fail_results = unknown_runs.len();
-    let run_pb =
-        multi.add(ProgressBar::new(unknown_build_fail_results as u64).with_message("Processing logs"));
+    let run_pb = multi
+        .add(ProgressBar::new(unknown_build_fail_results as u64).with_message("Processing logs"));
     run_pb.set_style(
         ProgressStyle::with_template("{msg} {wide_bar} {human_pos}/{human_len}").unwrap(),
     );
@@ -74,6 +72,7 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
     let targets = [
         ("E0277", "error[E0277]:"),
         ("E0308", "error[E0308]: mismatched types"),
+        ("E0391", "error[E0391]: cycle detected when"),
         (
             "E0422",
             "error[E0422]: cannot find struct, variant or union type",
@@ -159,7 +158,6 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
     println!("others: {}", other.len());
     println!("----------------------------------");
     println!("{other:#?}");
-
 
     Ok(())
 }
