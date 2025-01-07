@@ -105,7 +105,7 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
 
     let mut findings = BTreeMap::<Cow<'static, str>, usize>::new();
 
-    let error_regex = regex::RegexBuilder::new(r#"^\[INFO\] \[stdout\] error\[(E\d*)\]:"#)
+    let error_regex = regex::RegexBuilder::new(r#"^\[INFO\] \[stdout\] error\[(E\d+)\]:"#)
         .multi_line(true)
         .build()
         .unwrap();
