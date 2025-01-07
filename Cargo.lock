@@ -185,6 +185,7 @@ dependencies = [
  "indicatif",
  "indicatif-log-bridge",
  "log",
+ "regex",
  "reqwest",
  "serde",
  "serde_json",

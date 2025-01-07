@@ -1,4 +1,4 @@
-use std::{collections::BTreeMap, env::args, path::Path, time::Duration};
+use std::{borrow::Cow, collections::BTreeMap, env::args, path::Path, time::Duration};
 
 use futures::StreamExt as _;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -70,18 +70,6 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
         .buffer_unordered(20);
 
     let targets = [
-        ("E0277", "error[E0277]:"),
-        ("E0283", "error[E0283]: type annotations needed"),
-        ("E0308", "error[E0308]: mismatched types"),
-        ("E0391", "error[E0391]: cycle detected when"),
-        (
-            "E0422",
-            "error[E0422]: cannot find struct, variant or union type",
-        ),
-        ("E0463", "error[E0463]: can't find crate for"),
-        ("E0557", "error[E0557]: feature has been removed"),
-        ("E0635", "error[E0635]: unknown feature"),
-        ("E0685", "error[E0658]: use of unstable library feature"),
         ("compile_error!", "compile_error!"),
         (
             "missing-env-var",
@@ -115,7 +103,12 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
         ("ice", "error: internal compiler error:"),
     ];
 
-    let mut findings = BTreeMap::<_, usize>::new();
+    let mut findings = BTreeMap::<Cow<'static, str>, usize>::new();
+
+    let error_regex = regex::RegexBuilder::new(r#"^\[INFO\] \[stdout\] error\[(E\d*)\]:"#)
+        .multi_line(true)
+        .build()
+        .unwrap();
 
     while let Some((krate_name, run, log)) = stream.next().await {
         match log {
@@ -124,7 +117,16 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
 
                 for (target_name, target) in targets {
                     if log.contains(target) {
-                        *findings.entry(target_name).or_default() += 1;
+                        *findings.entry(target_name.into()).or_default() += 1;
+                        has_reason = true;
+                    }
+                }
+
+                for needle in error_regex.captures_iter(&log) {
+                    if let Some(capture) = needle.get(1) {
+                        *findings
+                            .entry(capture.as_str().to_string().into())
+                            .or_default() += 1;
                         has_reason = true;
                     }
                 }
@@ -149,7 +151,8 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
     println!("build failed(unknown): {unknown_build_fail_results}");
     println!("----------------------------------");
     println!("Results:");
-    for (&name, &count) in &findings {
+
+    for (name, &count) in &findings {
         println!("{name}: {count}")
     }
 
