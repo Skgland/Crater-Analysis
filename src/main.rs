@@ -71,6 +71,7 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
 
     let targets = [
         ("E0277", "error[E0277]:"),
+        ("E0283", "error[E0283]: type annotations needed"),
         ("E0308", "error[E0308]: mismatched types"),
         ("E0391", "error[E0391]: cycle detected when"),
         (
