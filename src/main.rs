@@ -22,20 +22,37 @@ async fn main() -> Result<(), AnalysisError> {
     let multi = MultiProgress::new();
     LogWrapper::new(multi.clone(), logger).try_init().unwrap();
 
-    let expriment = args().nth(1).unwrap();
+    let reports = futures::stream::iter(args().skip(1))
+        .map(|experiment| {
+            let multi = multi.clone();
+            async move { run_analysis(&experiment, multi).await }
+        })
+        .buffered(5)
+        .collect::<Vec<_>>()
+        .await;
 
-    run_analysis(&expriment, multi).await
+    for report in reports {
+        println!("");
+        report?.print_report();
+    }
+
+    Ok(())
 }
 
-async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), AnalysisError> {
+async fn run_analysis(
+    experiment: &str,
+    multi: MultiProgress,
+) -> Result<AnalysisReport, AnalysisError> {
     if let Err(err) = std::fs::create_dir_all(format!("./results/{experiment}/logs")) {
         log::warn!("Failed to ensure cache dir exists: {err}");
     }
 
-    let report_ps = multi.add(ProgressBar::new_spinner().with_message("Getting Crater Report"));
+    let report_ps = multi.add(
+        ProgressBar::new_spinner().with_message(format!("Getting Crater Report for {experiment}")),
+    );
     report_ps.enable_steady_tick(Duration::from_millis(100));
     let report = get_report(experiment).await?;
-    report_ps.set_message("Processing Crater Report");
+    report_ps.set_message(format!("Processing Crater Report for {experiment}"));
 
     let mut other = Vec::new();
 
@@ -53,8 +70,10 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
         .collect::<Vec<_>>();
 
     let unknown_build_fail_results = unknown_runs.len();
-    let run_pb = multi
-        .add(ProgressBar::new(unknown_build_fail_results as u64).with_message("Processing logs"));
+    let run_pb = multi.add(
+        ProgressBar::new(unknown_build_fail_results as u64)
+            .with_message(format!("Processing logs for {experiment}")),
+    );
     run_pb.set_style(
         ProgressStyle::with_template("{msg} {wide_bar} {human_pos}/{human_len}").unwrap(),
     );
@@ -70,37 +89,65 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
         .buffer_unordered(20);
 
     let targets = [
-        ("compile_error!", "compile_error!"),
+        (
+            "docker",
+            [
+                "[INFO] [stderr] Error response from daemon:",
+                ": no such file or directory",
+            ]
+            .as_slice(),
+        ),
+        (
+            "docker",
+            &[
+                "[INFO] [stderr] Error response from daemon:",
+                ": file exists",
+            ],
+        ),
+        ("compile_error!", &["compile_error!"]),
         (
             "missing-env-var",
-            "note: this error originates in the macro `env`",
+            &["note: this error originates in the macro `env`"],
         ),
         (
             "delimiter missmatch",
-            "error: mismatched closing delimiter:",
+            &["error: mismatched closing delimiter:"],
         ),
-        ("no-space", "no space left on device"),
+        ("no-space", &["no space left on device"]),
         (
             "linker-bus-error",
-            "collect2: fatal error: ld terminated with signal 7 [Bus error]",
+            &["collect2: fatal error: ld terminated with signal 7 [Bus error]"],
         ),
+        ("useless-conversion", &["error: this conversion is useless"]),
+        (
+            "build-script",
+            &["[INFO] [stderr] error: failed to run custom build command for"],
+        ),
+        ("download", &["[INFO] [stderr] error: failed to download"]),
         (
             "linker-undefined-symbol",
-            "rust-lld: error: undefined symbol:",
+            &["rust-lld: error: undefined symbol:"],
         ),
         (
             "linker-missing-library",
-            "rust-lld: error: unable to find library",
+            &["rust-lld: error: unable to find library"],
+        ),
+        (
+            "linker-write-output",
+            &[
+                "rust-lld: error: failed to write output",
+                "No such file or directory",
+            ],
         ),
         (
             "include_str-missing-file",
-            "note: this error originates in the macro `include_str`",
+            &["note: this error originates in the macro `include_str`"],
         ),
         (
             "include_bytes-missing-file",
-            "note: this error originates in the macro `include_bytes`",
+            &["note: this error originates in the macro `include_bytes`"],
         ),
-        ("ice", "error: internal compiler error:"),
+        ("ice", &["error: internal compiler error:"]),
     ];
 
     let mut findings = BTreeMap::<Cow<'static, str>, usize>::new();
@@ -115,10 +162,12 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
             Ok(log) => {
                 let mut has_reason = false;
 
-                for (target_name, target) in targets {
-                    if log.contains(target) {
-                        *findings.entry(target_name.into()).or_default() += 1;
-                        has_reason = true;
+                for line in log.lines() {
+                    for (target_name, target) in targets {
+                        if target.iter().all(|pat| line.contains(pat)) {
+                            *findings.entry(target_name.into()).or_default() += 1;
+                            has_reason = true;
+                        }
                     }
                 }
 
@@ -144,26 +193,48 @@ async fn run_analysis(experiment: &str, multi: MultiProgress) -> Result<(), Anal
         run_pb.inc(1);
     }
 
-    run_pb.finish_with_message("Processed logs");
-    report_ps.finish_with_message("Processed Crated Report");
+    run_pb.finish_with_message(format!("Processed logs for {experiment}"));
+    report_ps.finish_with_message(format!("Processed Crated Report for {experiment}"));
 
-    println!("Regressed: {regressed_count}");
-    println!("build failed(unknown): {unknown_build_fail_results}");
-    println!("----------------------------------");
-    println!("Results:");
+    Ok(AnalysisReport {
+        experiment: experiment.to_string(),
+        regressed_count: regressed_count,
+        unknown_build_fail_results,
+        findings,
+        other: other
+            .into_iter()
+            .map(|(a, b)| (a.to_string(), b.to_string()))
+            .collect(),
+    })
+}
 
-    for (name, &count) in &findings {
-        println!("{name}: {count}")
+struct AnalysisReport {
+    experiment: String,
+    regressed_count: usize,
+    unknown_build_fail_results: usize,
+    findings: BTreeMap<Cow<'static, str>, usize>,
+    other: Vec<(String, String)>,
+}
+
+impl AnalysisReport {
+    pub fn print_report(&self) {
+        println!("Report for Crater Experiment {}", self.experiment);
+        println!("Regressed: {}", self.regressed_count);
+        println!("build failed(unknown): {}", self.unknown_build_fail_results);
+        println!("----------------------------------");
+        println!("Results:");
+
+        for (name, &count) in &self.findings {
+            println!("{name}: {count}")
+        }
+
+        let sum: usize = self.findings.values().sum();
+        println!("----------------------------------");
+        println!("sum: {sum}");
+        println!("others: {}", self.other.len());
+        println!("----------------------------------");
+        println!("{:#?}", self.other);
     }
-
-    let sum: usize = findings.values().sum();
-    println!("----------------------------------");
-    println!("sum: {sum}");
-    println!("others: {}", other.len());
-    println!("----------------------------------");
-    println!("{other:#?}");
-
-    Ok(())
 }
 
 async fn get_log(experiment: &str, log: &str) -> Result<String, AnalysisError> {
@@ -211,7 +282,7 @@ async fn get_or_download_file(
 ) -> Result<String, AnalysisError> {
     let resuls = match tokio::fs::read_to_string(cache_path).await {
         Ok(content) => {
-            log::info!("Using cached file");
+            log::debug!("Using cached file");
             content
         }
         Err(err) => {
@@ -225,7 +296,7 @@ async fn get_or_download_file(
                 "no-parent".to_string()
             };
 
-            log::info!(
+            log::debug!(
                 "Failed to access cached resuls for {entry}, falling back to downloading: {err}"
             );
             let response = reqwest::get(download_url).await?;
