@@ -81,6 +81,9 @@ async fn run_analysis(
         ProgressStyle::with_template("{msg} {wide_bar} {human_pos}/{human_len}").unwrap(),
     );
 
+    let parallelism =
+        std::thread::available_parallelism().map_or(20, |available| available.get() * 2);
+
     let mut stream = futures::stream::iter(interresting_runs)
         .map(|(krate_name, run)| {
             let experiment = &experiment;
@@ -89,7 +92,7 @@ async fn run_analysis(
                 (krate_name, run, log)
             }
         })
-        .buffer_unordered(20);
+        .buffer_unordered(parallelism);
 
     let targets = [
         (
