@@ -58,8 +58,8 @@ async fn run_analysis(
 
     let mut regressed_count = 0;
 
-    let expected_krate_result = "regressed";
-    let expected_run_result = "build-fail:unknown";
+    let expected_krate_result = "error";
+    let expected_run_result = "error";
 
     let interresting_runs = report
         .crates
