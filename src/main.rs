@@ -155,6 +155,7 @@ async fn run_analysis(
             "task or parent failed",
             &["this task or one of its parent failed:"],
         ),
+        ("invalid mainfest", &["error: failed to parse manifest at"]),
     ];
 
     let mut findings = BTreeMap::<Cow<'static, str>, usize>::new();
