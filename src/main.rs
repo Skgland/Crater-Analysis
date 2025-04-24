@@ -58,27 +58,30 @@ async fn run_analysis(
 
     let mut regressed_count = 0;
 
-    let unknown_runs = report
+    let expected_krate_result = "regressed";
+    let expected_run_result = "build-fail:unknown";
+
+    let interresting_runs = report
         .crates
         .iter()
-        .filter(|krate| krate.res == "regressed")
+        .filter(|krate| krate.res == expected_krate_result)
         .inspect(|_| {
             regressed_count += 1;
         })
         .flat_map(|krate| krate.runs.iter().flatten().map(|run| (&krate.name, run)))
-        .filter(|(_, run)| run.res == "build-fail:unknown")
+        .filter(|(_, run)| run.res == expected_run_result)
         .collect::<Vec<_>>();
 
-    let unknown_build_fail_results = unknown_runs.len();
+    let interesting_results_count = interresting_runs.len();
     let run_pb = multi.add(
-        ProgressBar::new(unknown_build_fail_results as u64)
+        ProgressBar::new(interesting_results_count as u64)
             .with_message(format!("Processing logs for {experiment}")),
     );
     run_pb.set_style(
         ProgressStyle::with_template("{msg} {wide_bar} {human_pos}/{human_len}").unwrap(),
     );
 
-    let mut stream = futures::stream::iter(unknown_runs)
+    let mut stream = futures::stream::iter(interresting_runs)
         .map(|(krate_name, run)| {
             let experiment = &experiment;
             async move {
@@ -148,6 +151,10 @@ async fn run_analysis(
             &["note: this error originates in the macro `include_bytes`"],
         ),
         ("ice", &["error: internal compiler error:"]),
+        (
+            "task or parent failed",
+            &["this task or one of its parent failed:"],
+        ),
     ];
 
     let mut findings = BTreeMap::<Cow<'static, str>, usize>::new();
@@ -199,19 +206,23 @@ async fn run_analysis(
     Ok(AnalysisReport {
         experiment: experiment.to_string(),
         regressed_count: regressed_count,
-        unknown_build_fail_results,
+        interesting_results_count,
         findings,
         other: other
             .into_iter()
             .map(|(a, b)| (a.to_string(), b.to_string()))
             .collect(),
+        expected_krate_result: expected_krate_result.into(),
+        expected_run_result: expected_run_result.into(),
     })
 }
 
 struct AnalysisReport {
     experiment: String,
+    expected_krate_result: String,
+    expected_run_result: String,
     regressed_count: usize,
-    unknown_build_fail_results: usize,
+    interesting_results_count: usize,
     findings: BTreeMap<Cow<'static, str>, usize>,
     other: Vec<(String, String)>,
 }
@@ -219,8 +230,11 @@ struct AnalysisReport {
 impl AnalysisReport {
     pub fn print_report(&self) {
         println!("Report for Crater Experiment {}", self.experiment);
-        println!("Regressed: {}", self.regressed_count);
-        println!("build failed(unknown): {}", self.unknown_build_fail_results);
+        println!("{}: {}", self.expected_krate_result, self.regressed_count);
+        println!(
+            "{}: {}",
+            self.expected_run_result, self.interesting_results_count
+        );
         println!("----------------------------------");
         println!("Results:");
 
