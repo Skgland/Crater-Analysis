@@ -264,7 +264,8 @@ impl AnalysisReport {
 
 async fn get_log(experiment: &str, log: &str) -> Result<String, AnalysisError> {
     let log_folder = format!("./results/{experiment}/logs/{log}");
-    if let Err(err) = std::fs::create_dir_all(&log_folder) {
+
+    if let Err(err) = tokio::fs::create_dir_all(&log_folder).await {
         log::warn!("Failed to create cache folder: {err}");
     }
     let log_path = format!("{log_folder}/log.txt");
