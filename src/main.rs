@@ -159,6 +159,10 @@ async fn run_analysis(
             &["this task or one of its parent failed:"],
         ),
         ("invalid mainfest", &["error: failed to parse manifest at"]),
+        (
+            "timeout",
+            &["[ERROR] error running command: no output for 300 seconds"],
+        ),
     ];
 
     let mut findings = BTreeMap::<Cow<'static, str>, usize>::new();
