@@ -12,7 +12,7 @@ enum AnalysisError {
     Json(#[from] serde_json::Error),
 }
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<(), AnalysisError> {
     let logger = env_logger::Builder::new()
         .filter_level(log::LevelFilter::Info)
