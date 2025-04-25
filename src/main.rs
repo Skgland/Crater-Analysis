@@ -234,9 +234,12 @@ struct AnalysisReport {
 impl AnalysisReport {
     pub fn print_report(&self) {
         println!("Report for Crater Experiment {}", self.experiment);
-        println!("{}: {}", self.expected_krate_result, self.regressed_count);
         println!(
-            "{}: {}",
+            "{} crates: {}",
+            self.expected_krate_result, self.regressed_count
+        );
+        println!(
+            "{} runs: {}",
             self.expected_run_result, self.interesting_results_count
         );
         println!("----------------------------------");
