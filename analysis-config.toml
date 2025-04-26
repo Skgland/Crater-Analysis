@@ -1,0 +1,154 @@
+crate_result = "error"
+run_result = "error"
+
+[[targets."task or parent failed (no space)"]]
+all = ["this task or one of its parent failed: No space left on device"]
+
+[[targets."task or parent failed (no space)"]]
+all = ["this task or one of its parent failed: Io Error: No space left on device"]
+
+[[targets."checksum mismatch"]]
+all = [
+    "error: checksum for ",
+    " changed between lock files",
+]
+
+[[targets."compile_error!"]]
+all = ["compile_error!"]
+
+[[targets.download]]
+all = ["[INFO] [stderr] error: failed to download"]
+
+[[targets.linker-write-output]]
+all = [
+    "rust-lld: error: failed to write output",
+    "No such file or directory",
+]
+
+[[targets.include_bytes-missing-file]]
+all = ["note: this error originates in the macro `include_bytes`"]
+
+[[targets."filename too long"]]
+all = [
+    "error: unable to create ",
+    ": File name too long",
+]
+
+[[targets."version selection failed"]]
+all = ["error: failed to select a version for "]
+
+[[targets.no-space]]
+all = ["no space left on device"]
+
+[[targets.timeout]]
+all = ["[ERROR] error running command: no output for 300 seconds"]
+
+[[targets.docker]]
+all = [
+    "[INFO] [stderr] Error response from daemon:",
+    ": no such file or directory",
+]
+
+[[targets.docker]]
+all = [
+    "[INFO] [stderr] Error response from daemon:",
+    ": file exists",
+]
+
+[[targets."missing dep"]]
+all = [
+    "error: no matching package named ",
+    " found",
+]
+
+[[targets."missing dep"]]
+all = ["error: no matching package found"]
+
+[[targets."missing dep"]]
+all = [
+    "no matching package for override ",
+    " found",
+]
+
+[[targets."invalid manifest"]]
+all = ["error: failed to parse manifest at"]
+
+[[targets."invalid manifest"]]
+all = ["error: invalid table header"]
+
+[[targets."invalid manifest"]]
+all = [
+    "error: invalid type: ",
+    ", expected ",
+]
+
+[[targets."missing registry"]]
+all = ["registry index was not found in any configuration:"]
+
+[[targets."dep removed feature"]]
+all = [
+    "the package ",
+    " depends on ",
+    ", with features: ",
+    " but ",
+    " does not have these features",
+]
+
+[[targets.linker-missing-library]]
+all = ["rust-lld: error: unable to find library"]
+
+[[targets."cyclic package dependency"]]
+all = [
+    "error: cyclic package dependency: package ",
+    " depends on itself. Cycle:",
+]
+
+[[targets.ice]]
+all = ["error: internal compiler error:"]
+
+[[targets.build-script]]
+all = ["[INFO] [stderr] error: failed to run custom build command for"]
+
+[[targets."cyclic feature dependency"]]
+all = [
+    "error: cyclic feature dependency: feature ",
+    " depends on itself",
+]
+
+[[targets."delimiter missmatch"]]
+all = ["error: mismatched closing delimiter:"]
+
+[[targets."invalid UTF-8"]]
+all = ["stream did not contain valid UTF-8"]
+
+[[targets."invalid lockfile"]]
+all = ["error: failed to parse lock file at"]
+
+[[targets.missing-env-var]]
+all = ["note: this error originates in the macro `env`"]
+
+[[targets.useless-conversion]]
+all = ["error: this conversion is useless"]
+
+[[targets.linker-undefined-symbol]]
+all = ["rust-lld: error: undefined symbol:"]
+
+[[targets.linker-bus-error]]
+all = ["collect2: fatal error: ld terminated with signal 7 [Bus error]"]
+
+[[targets."task or parent failed (failed to clone)"]]
+all = ["this task or one of its parent failed: failed to clone"]
+
+[[targets."links conflict"]]
+all = [
+    "the package ",
+    " links to the native library ",
+    ", but it conflicts with a previous package which links to ",
+    " as well:",
+]
+
+[[targets."links conflict"]]
+all = ["error: Attempting to resolve a dependency with more than one crate with links="]
+
+[[targets.include_str-missing-file]]
+all = ["note: this error originates in the macro `include_str`"]

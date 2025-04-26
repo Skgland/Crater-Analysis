@@ -1,4 +1,10 @@
-use std::{borrow::Cow, collections::BTreeMap, env::args, path::Path, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    env::args,
+    io::ErrorKind,
+    path::Path,
+    time::Duration,
+};
 
 use futures::StreamExt as _;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
@@ -10,6 +16,186 @@ enum AnalysisError {
     Reqwest(#[from] reqwest::Error),
     Io(#[from] std::io::Error),
     Json(#[from] serde_json::Error),
+    TomlDeserialization(toml::de::Error),
+    #[error("Config not found")]
+    MissingConfig,
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+struct Config {
+    crate_result: String,
+    run_result: String,
+    targets: HashMap<String, Vec<Target>>,
+}
+impl Config {
+    fn example() -> Self {
+        const EXAMPLE_TARGETS: &[(&str, &[&str])] = &[
+    (
+        "docker",
+        [
+            "[INFO] [stderr] Error response from daemon:",
+            ": no such file or directory",
+        ]
+        .as_slice(),
+    ),
+    (
+        "docker",
+        &[
+            "[INFO] [stderr] Error response from daemon:",
+            ": file exists",
+        ],
+    ),
+    ("compile_error!", &["compile_error!"]),
+    (
+        "missing-env-var",
+        &["note: this error originates in the macro `env`"],
+    ),
+    (
+        "delimiter missmatch",
+        &["error: mismatched closing delimiter:"],
+    ),
+    ("no-space", &["no space left on device"]),
+    (
+        "linker-bus-error",
+        &["collect2: fatal error: ld terminated with signal 7 [Bus error]"],
+    ),
+    ("useless-conversion", &["error: this conversion is useless"]),
+    (
+        "build-script",
+        &["[INFO] [stderr] error: failed to run custom build command for"],
+    ),
+    ("download", &["[INFO] [stderr] error: failed to download"]),
+    (
+        "linker-undefined-symbol",
+        &["rust-lld: error: undefined symbol:"],
+    ),
+    (
+        "linker-missing-library",
+        &["rust-lld: error: unable to find library"],
+    ),
+    (
+        "linker-write-output",
+        &[
+            "rust-lld: error: failed to write output",
+            "No such file or directory",
+        ],
+    ),
+    (
+        "include_str-missing-file",
+        &["note: this error originates in the macro `include_str`"],
+    ),
+    (
+        "include_bytes-missing-file",
+        &["note: this error originates in the macro `include_bytes`"],
+    ),
+    ("ice", &["error: internal compiler error:"]),
+    (
+        "task or parent failed (no space)",
+        &["this task or one of its parent failed: No space left on device"],
+    ),
+    (
+        "task or parent failed (no space)",
+        &["this task or one of its parent failed: Io Error: No space left on device"],
+    ),
+    (
+        "task or parent failed (failed to clone)",
+        &["this task or one of its parent failed: failed to clone"],
+    ),
+    ("invalid manifest", &["error: failed to parse manifest at"]),
+    ("invalid manifest", &["error: invalid table header"]),
+    (
+        "invalid manifest",
+        &["error: invalid type: ", ", expected "],
+    ),
+    ("invalid lockfile", &["error: failed to parse lock file at"]),
+    (
+        "timeout",
+        &["[ERROR] error running command: no output for 300 seconds"],
+    ),
+    (
+        "checksum mismatch",
+        &["error: checksum for ", " changed between lock files"],
+    ),
+    (
+        "links conflict",
+        &[
+            "the package ",
+            " links to the native library ",
+            ", but it conflicts with a previous package which links to ",
+            " as well:",
+        ],
+    ),
+    (
+        "links conflict",
+        &["error: Attempting to resolve a dependency with more than one crate with links="],
+    ),
+    (
+        "version selection failed",
+        &["error: failed to select a version for "],
+    ),
+    (
+        "missing dep",
+        &["error: no matching package named ", " found"],
+    ),
+    ("missing dep", &["error: no matching package found"]),
+    (
+        "missing dep",
+        &["no matching package for override ", " found"],
+    ),
+    (
+        "dep removed feature",
+        &[
+            "the package ",
+            " depends on ",
+            ", with features: ",
+            " but ",
+            " does not have these features",
+        ],
+    ),
+    (
+        "missing registry",
+        &["registry index was not found in any configuration:"],
+    ),
+    (
+        "cyclic package dependency",
+        &[
+            "error: cyclic package dependency: package ",
+            " depends on itself. Cycle:",
+        ],
+    ),
+    (
+        "cyclic feature dependency",
+        &[
+            "error: cyclic feature dependency: feature ",
+            " depends on itself",
+        ],
+    ),
+    (
+        "filename too long",
+        &["error: unable to create ", ": File name too long"],
+    ),
+    ("invalid UTF-8", &["stream did not contain valid UTF-8"]),
+];
+
+        let mut targets = HashMap::<String, Vec<Target>>::new();
+
+        for (key, all) in EXAMPLE_TARGETS {
+            targets.entry(key.to_string()).or_default().push(Target {
+                all: all.iter().map(|part| part.to_string()).collect(),
+            });
+        }
+
+        Self {
+            crate_result: "error".to_string(),
+            run_result: "error".to_string(),
+            targets,
+        }
+    }
+}
+
+#[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
+struct Target {
+    all: Vec<String>,
 }
 
 #[tokio::main(flavor = "multi_thread")]
@@ -22,10 +208,32 @@ async fn main() -> Result<(), AnalysisError> {
     let multi = MultiProgress::new();
     LogWrapper::new(multi.clone(), logger).try_init().unwrap();
 
+    let config_path = "./analysis-config.toml";
+    let config = match std::fs::read_to_string(config_path) {
+        Ok(content) => match toml::from_str::<Config>(&content) {
+            Ok(content) => content,
+            Err(err) => {
+                println!("Failed to load config '{config_path}': {err}");
+                return Err(AnalysisError::TomlDeserialization(err));
+            }
+        },
+        Err(err) if err.kind() == ErrorKind::NotFound => {
+            let default_config = toml::to_string_pretty(&Config::example()).unwrap();
+
+            std::fs::write(config_path, default_config).unwrap();
+
+            return Err(AnalysisError::MissingConfig);
+        }
+        Err(err) => {
+            return Err(AnalysisError::Io(err));
+        }
+    };
+
     let reports = futures::stream::iter(args().skip(1))
         .map(|experiment| {
             let multi = multi.clone();
-            async move { run_analysis(&experiment, multi).await }
+            let config = config.clone();
+            async move { run_analysis(&config, &experiment, multi).await }
         })
         .buffered(5)
         .collect::<Vec<_>>()
@@ -40,6 +248,7 @@ async fn main() -> Result<(), AnalysisError> {
 }
 
 async fn run_analysis(
+    config: &Config,
     experiment: &str,
     multi: MultiProgress,
 ) -> Result<AnalysisReport, AnalysisError> {
@@ -58,18 +267,15 @@ async fn run_analysis(
 
     let mut regressed_count = 0;
 
-    let expected_krate_result = "error";
-    let expected_run_result = "error";
-
     let interresting_runs = report
         .crates
         .iter()
-        .filter(|krate| krate.res == expected_krate_result)
+        .filter(|krate| krate.res == config.crate_result)
         .inspect(|_| {
             regressed_count += 1;
         })
         .flat_map(|krate| krate.runs.iter().flatten().map(|run| (&krate.name, run)))
-        .filter(|(_, run)| run.res == expected_run_result)
+        .filter(|(_, run)| run.res == config.run_result)
         .collect::<Vec<_>>();
 
     let interesting_results_count = interresting_runs.len();
@@ -94,78 +300,7 @@ async fn run_analysis(
         })
         .buffer_unordered(parallelism);
 
-    let targets = [
-        (
-            "docker",
-            [
-                "[INFO] [stderr] Error response from daemon:",
-                ": no such file or directory",
-            ]
-            .as_slice(),
-        ),
-        (
-            "docker",
-            &[
-                "[INFO] [stderr] Error response from daemon:",
-                ": file exists",
-            ],
-        ),
-        ("compile_error!", &["compile_error!"]),
-        (
-            "missing-env-var",
-            &["note: this error originates in the macro `env`"],
-        ),
-        (
-            "delimiter missmatch",
-            &["error: mismatched closing delimiter:"],
-        ),
-        ("no-space", &["no space left on device"]),
-        (
-            "linker-bus-error",
-            &["collect2: fatal error: ld terminated with signal 7 [Bus error]"],
-        ),
-        ("useless-conversion", &["error: this conversion is useless"]),
-        (
-            "build-script",
-            &["[INFO] [stderr] error: failed to run custom build command for"],
-        ),
-        ("download", &["[INFO] [stderr] error: failed to download"]),
-        (
-            "linker-undefined-symbol",
-            &["rust-lld: error: undefined symbol:"],
-        ),
-        (
-            "linker-missing-library",
-            &["rust-lld: error: unable to find library"],
-        ),
-        (
-            "linker-write-output",
-            &[
-                "rust-lld: error: failed to write output",
-                "No such file or directory",
-            ],
-        ),
-        (
-            "include_str-missing-file",
-            &["note: this error originates in the macro `include_str`"],
-        ),
-        (
-            "include_bytes-missing-file",
-            &["note: this error originates in the macro `include_bytes`"],
-        ),
-        ("ice", &["error: internal compiler error:"]),
-        (
-            "task or parent failed",
-            &["this task or one of its parent failed:"],
-        ),
-        ("invalid mainfest", &["error: failed to parse manifest at"]),
-        (
-            "timeout",
-            &["[ERROR] error running command: no output for 300 seconds"],
-        ),
-    ];
-
-    let mut findings = BTreeMap::<Cow<'static, str>, usize>::new();
+    let mut findings = BTreeMap::<String, usize>::new();
 
     let error_regex = regex::RegexBuilder::new(r#"^\[INFO\] \[stdout\] error\[(E\d+)\]:"#)
         .multi_line(true)
@@ -178,8 +313,11 @@ async fn run_analysis(
                 let mut has_reason = false;
 
                 for line in log.lines() {
-                    for (target_name, target) in targets {
-                        if target.iter().all(|pat| line.contains(pat)) {
+                    for (target_name, targets) in &config.targets {
+                        if targets
+                            .iter()
+                            .any(|target| target.all.iter().all(|pat| line.contains(pat)))
+                        {
                             *findings.entry(target_name.into()).or_default() += 1;
                             has_reason = true;
                         }
@@ -220,8 +358,8 @@ async fn run_analysis(
             .into_iter()
             .map(|(a, b)| (a.to_string(), b.to_string()))
             .collect(),
-        expected_krate_result: expected_krate_result.into(),
-        expected_run_result: expected_run_result.into(),
+        expected_krate_result: config.crate_result.clone(),
+        expected_run_result: config.run_result.clone(),
     })
 }
 
@@ -231,7 +369,7 @@ struct AnalysisReport {
     expected_run_result: String,
     regressed_count: usize,
     interesting_results_count: usize,
-    findings: BTreeMap<Cow<'static, str>, usize>,
+    findings: BTreeMap<String, usize>,
     other: Vec<(String, String)>,
 }
 
