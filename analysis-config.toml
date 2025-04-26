@@ -165,3 +165,11 @@ all = ["note: this error originates in the macro `include_str`"]
 
 [[targets."unable to download"]]
 all = ["unable to download ", " version "]
+
+[[targets."access denied"]]
+all = [
+    "<Error><Code>AccessDenied</Code><Message>Access Denied</Message>",
+    "<RequestId>",
+    "</RequestId><HostId>",
+    "</HostId></Error>",
+]
