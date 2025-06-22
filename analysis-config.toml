@@ -173,3 +173,10 @@ all = [
     "</RequestId><HostId>",
     "</HostId></Error>",
 ]
+
+[[targets."invalid patch"]]
+all = [
+    "patch for `",
+    "` in `",
+    "` points to the same source, but patches must point to different sources",
+]
