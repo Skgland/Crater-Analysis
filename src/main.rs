@@ -357,7 +357,12 @@ async fn run_analysis(
         other: other
             .into_iter()
             .map(|(a, b)| (a.to_string(), b.to_string()))
-            .collect(),
+            .fold(BTreeMap::new(), |mut acc, (krate, run)| {
+                acc.entry(krate.to_string())
+                    .or_default()
+                    .push(run.to_string());
+                acc
+            }),
         expected_krate_result: config.crate_result.clone(),
         expected_run_result: config.run_result.clone(),
     })
@@ -370,7 +375,7 @@ struct AnalysisReport {
     regressed_count: usize,
     interesting_results_count: usize,
     findings: BTreeMap<String, usize>,
-    other: Vec<(String, String)>,
+    other: BTreeMap<String, Vec<String>>,
 }
 
 impl AnalysisReport {
