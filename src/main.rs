@@ -401,7 +401,14 @@ impl AnalysisReport {
 }
 
 async fn get_log(experiment: &str, log: &str) -> Result<String, AnalysisError> {
-    let log_folder = format!("./results/{experiment}/logs/{log}");
+    let mut log_folder = format!("./results/{experiment}/logs/{log}");
+    if let Some(prefix) = log_folder.strip_suffix(".") {
+        let mut current = prefix.to_string() + "/dot";
+        while current.contains("./") {
+            current = current.replace("./", "/dot/")
+        }
+        log_folder = current.trim_end_matches('/').to_string();
+    }
 
     if let Err(err) = tokio::fs::create_dir_all(&log_folder).await {
         log::warn!("Failed to create cache folder: {err}");
