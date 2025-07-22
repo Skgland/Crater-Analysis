@@ -9,6 +9,9 @@ use std::{
 use futures::StreamExt as _;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use indicatif_log_bridge::LogWrapper;
+use tokio::io::BufWriter;
+use tokio::io::AsyncWrite;
+use tokio::io::AsyncWriteExt;
 
 #[derive(thiserror::Error, Debug)]
 #[error("{0}")]
@@ -233,15 +236,24 @@ async fn main() -> Result<(), AnalysisError> {
         .map(|experiment| {
             let multi = multi.clone();
             let config = config.clone();
-            async move { run_analysis(&config, &experiment, multi).await }
+            async move { 
+                let report = run_analysis(&config, &experiment, &multi).await?;
+                
+                let path = format!("{}.report", report.experiment);
+                let file = tokio::fs::File::create(&path).await?;
+                let mut buffered = BufWriter::new(file);
+                report.print_report(&mut buffered).await?;
+                buffered.flush().await?;
+                multi.println(format!("Report for {} written to '{path}'", report.experiment))?;
+                Ok(())
+            }
         })
         .buffered(5)
-        .collect::<Vec<_>>()
+        .collect::<Vec<Result<_,AnalysisError>>>()
         .await;
 
     for report in reports {
-        println!("");
-        report?.print_report();
+        report?;
     }
 
     Ok(())
@@ -250,7 +262,7 @@ async fn main() -> Result<(), AnalysisError> {
 async fn run_analysis(
     config: &Config,
     experiment: &str,
-    multi: MultiProgress,
+    multi: &MultiProgress,
 ) -> Result<AnalysisReport, AnalysisError> {
     if let Err(err) = std::fs::create_dir_all(format!("./results/{experiment}/logs")) {
         log::warn!("Failed to ensure cache dir exists: {err}");
@@ -379,29 +391,25 @@ struct AnalysisReport {
 }
 
 impl AnalysisReport {
-    pub fn print_report(&self) {
-        println!("Report for Crater Experiment {}", self.experiment);
-        println!(
-            "{} crates: {}",
-            self.expected_krate_result, self.regressed_count
-        );
-        println!(
-            "{} runs: {}",
-            self.expected_run_result, self.interesting_results_count
-        );
-        println!("----------------------------------");
-        println!("Results:");
+    pub async fn print_report<W: AsyncWrite + Unpin>(&self, writer: &mut W) -> Result<(), std::io::Error>{
+        writer.write_all(format!("Report for Crater Experiment {}\n", self.experiment).as_bytes()).await?;
+        writer.write_all(format!("{} crates: {}\n", self.expected_krate_result, self.regressed_count).as_bytes()).await?;
+        writer.write_all(format!("{} runs: {}\n",self.expected_run_result, self.interesting_results_count).as_bytes()).await?;
+        
+        writer.write_all("----------------------------------\n".as_bytes()).await?;
+        writer.write_all("Results:\n".as_bytes()).await?;
 
         for (name, &count) in &self.findings {
-            println!("{name}: {count}")
+            writer.write_all(format!("{name}: {count}\n").as_bytes()).await?;
         }
 
         let sum: usize = self.findings.values().sum();
-        println!("----------------------------------");
-        println!("sum: {sum}");
-        println!("others: {}", self.other.len());
-        println!("----------------------------------");
-        println!("{:#?}", self.other);
+        writer.write_all("----------------------------------\n".as_bytes()).await?;
+        writer.write_all(format!("sum: {sum}\n").as_bytes()).await?;
+        writer.write_all(format!("others: {}\n", self.other.len()).as_bytes()).await?;
+        writer.write_all("----------------------------------\n".as_bytes()).await?;
+        writer.write_all(format!("{:#?}\n", self.other).as_bytes()).await?;
+        Ok(())
     }
 }
 
