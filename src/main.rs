@@ -237,14 +237,15 @@ async fn main() -> Result<(), AnalysisError> {
             let multi = multi.clone();
             let config = config.clone();
             async move { 
-                let report = run_analysis(&config, &experiment, &multi).await?;
-                
+                let report_ps = multi.add(ProgressBar::new_spinner());
+                let report = run_analysis(&config, &experiment, &report_ps, &multi).await?;
+                report_ps.set_message(format!("Writing report for experiment {}", report.experiment));
                 let path = format!("{}.report", report.experiment);
                 let file = tokio::fs::File::create(&path).await?;
                 let mut buffered = BufWriter::new(file);
                 report.print_report(&mut buffered).await?;
                 buffered.flush().await?;
-                multi.println(format!("Report for {} written to '{path}'", report.experiment))?;
+                report_ps.finish_with_message(format!("Report for {} written to '{path}'", report.experiment));
                 Ok(())
             }
         })
@@ -262,15 +263,14 @@ async fn main() -> Result<(), AnalysisError> {
 async fn run_analysis(
     config: &Config,
     experiment: &str,
+    report_ps: &ProgressBar,
     multi: &MultiProgress,
 ) -> Result<AnalysisReport, AnalysisError> {
     if let Err(err) = std::fs::create_dir_all(format!("./results/{experiment}/logs")) {
         log::warn!("Failed to ensure cache dir exists: {err}");
     }
 
-    let report_ps = multi.add(
-        ProgressBar::new_spinner().with_message(format!("Getting Crater Report for {experiment}")),
-    );
+    report_ps.set_message(format!("Getting Crater Report for {experiment}"));
     report_ps.enable_steady_tick(Duration::from_millis(100));
     let report = get_report(experiment).await?;
     report_ps.set_message(format!("Processing Crater Report for {experiment}"));
@@ -358,7 +358,7 @@ async fn run_analysis(
         run_pb.inc(1);
     }
 
-    run_pb.finish_with_message(format!("Processed logs for {experiment}"));
+    run_pb.finish_and_clear();
     report_ps.finish_with_message(format!("Processed Crated Report for {experiment}"));
 
     Ok(AnalysisReport {
