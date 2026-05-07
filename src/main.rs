@@ -232,13 +232,19 @@ async fn main() -> Result<(), AnalysisError> {
         }
     };
 
+    let parallelism =
+        std::thread::available_parallelism().map_or(20, |available| available.get() * 2);
+
+    log::info!("Using a parallelism value of {parallelism}");
+
     let reports = futures::stream::iter(args().skip(1))
         .map(|experiment| {
             let multi = multi.clone();
             let config = config.clone();
             async move {
                 let report_ps = multi.add(ProgressBar::new_spinner());
-                let report = run_analysis(&config, &experiment, &report_ps, &multi).await?;
+                let report =
+                    run_analysis(&config, &experiment, &report_ps, &multi, parallelism).await?;
                 report_ps.set_message(format!(
                     "Writing report for experiment {}",
                     report.experiment
@@ -271,6 +277,7 @@ async fn run_analysis(
     experiment: &str,
     report_ps: &ProgressBar,
     multi: &MultiProgress,
+    parallelism: usize,
 ) -> Result<AnalysisReport, AnalysisError> {
     if let Err(err) = std::fs::create_dir_all(format!("./results/{experiment}/logs")) {
         log::warn!("Failed to ensure cache dir exists: {err}");
@@ -304,11 +311,6 @@ async fn run_analysis(
     run_pb.set_style(
         ProgressStyle::with_template("{msg} {wide_bar} {human_pos}/{human_len}").unwrap(),
     );
-
-    let parallelism =
-        std::thread::available_parallelism().map_or(20, |available| available.get() * 2);
-
-    let _ = multi.println(format!("Using a parallelism value of {parallelism}"));
 
     let mut stream = futures::stream::iter(interesting_runs)
         .map(|(krate_name, run)| {
