@@ -1,5 +1,5 @@
-crate_result = "error"
-run_result = "error"
+crate_result = "prepare-fail"
+run_result = "prepare-fail:unknown"
 
 [[targets."task or parent failed (no space)"]]
 all = ["this task or one of its parent failed: No space left on device"]
@@ -91,6 +91,15 @@ all = [
     ", with features: ",
     " but ",
     " does not have these features",
+]
+
+[[targets."dep removed feature"]]
+all = [
+    "package ",
+    " depends on ",
+    " with feature ",
+    " but ",
+    " does not have that feature",
 ]
 
 [[targets.linker-missing-library]]
