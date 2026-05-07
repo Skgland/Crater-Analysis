@@ -9,9 +9,9 @@ use std::{
 use futures::StreamExt as _;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use indicatif_log_bridge::LogWrapper;
-use tokio::io::BufWriter;
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
+use tokio::io::BufWriter;
 
 #[derive(thiserror::Error, Debug)]
 #[error("{0}")]
@@ -54,7 +54,7 @@ impl Config {
         &["note: this error originates in the macro `env`"],
     ),
     (
-        "delimiter missmatch",
+        "delimiter mismatch",
         &["error: mismatched closing delimiter:"],
     ),
     ("no-space", &["no space left on device"]),
@@ -236,21 +236,27 @@ async fn main() -> Result<(), AnalysisError> {
         .map(|experiment| {
             let multi = multi.clone();
             let config = config.clone();
-            async move { 
+            async move {
                 let report_ps = multi.add(ProgressBar::new_spinner());
                 let report = run_analysis(&config, &experiment, &report_ps, &multi).await?;
-                report_ps.set_message(format!("Writing report for experiment {}", report.experiment));
+                report_ps.set_message(format!(
+                    "Writing report for experiment {}",
+                    report.experiment
+                ));
                 let path = format!("{}.report", report.experiment);
                 let file = tokio::fs::File::create(&path).await?;
                 let mut buffered = BufWriter::new(file);
                 report.print_report(&mut buffered).await?;
                 buffered.flush().await?;
-                report_ps.finish_with_message(format!("Report for {} written to '{path}'", report.experiment));
+                report_ps.finish_with_message(format!(
+                    "Report for {} written to '{path}'",
+                    report.experiment
+                ));
                 Ok(())
             }
         })
         .buffered(5)
-        .collect::<Vec<Result<_,AnalysisError>>>()
+        .collect::<Vec<Result<_, AnalysisError>>>()
         .await;
 
     for report in reports {
@@ -279,7 +285,7 @@ async fn run_analysis(
 
     let mut regressed_count = 0;
 
-    let interresting_runs = report
+    let interesting_runs = report
         .crates
         .iter()
         .filter(|krate| krate.res == config.crate_result)
@@ -290,7 +296,7 @@ async fn run_analysis(
         .filter(|(_, run)| run.res == config.run_result)
         .collect::<Vec<_>>();
 
-    let interesting_results_count = interresting_runs.len();
+    let interesting_results_count = interesting_runs.len();
     let run_pb = multi.add(
         ProgressBar::new(interesting_results_count as u64)
             .with_message(format!("Processing logs for {experiment}")),
@@ -302,7 +308,7 @@ async fn run_analysis(
     let parallelism =
         std::thread::available_parallelism().map_or(20, |available| available.get() * 2);
 
-    let mut stream = futures::stream::iter(interresting_runs)
+    let mut stream = futures::stream::iter(interesting_runs)
         .map(|(krate_name, run)| {
             let experiment = &experiment;
             async move {
@@ -338,9 +344,7 @@ async fn run_analysis(
 
                 for needle in error_regex.captures_iter(&log) {
                     if let Some(capture) = needle.get(1) {
-                        *findings
-                            .entry(capture.as_str().to_string().into())
-                            .or_default() += 1;
+                        *findings.entry(capture.as_str().to_string()).or_default() += 1;
                         has_reason = true;
                     }
                 }
@@ -363,7 +367,7 @@ async fn run_analysis(
 
     Ok(AnalysisReport {
         experiment: experiment.to_string(),
-        regressed_count: regressed_count,
+        regressed_count,
         interesting_results_count,
         findings,
         other: other
@@ -391,24 +395,57 @@ struct AnalysisReport {
 }
 
 impl AnalysisReport {
-    pub async fn print_report<W: AsyncWrite + Unpin>(&self, writer: &mut W) -> Result<(), std::io::Error>{
-        writer.write_all(format!("Report for Crater Experiment {}\n", self.experiment).as_bytes()).await?;
-        writer.write_all(format!("{} crates: {}\n", self.expected_krate_result, self.regressed_count).as_bytes()).await?;
-        writer.write_all(format!("{} runs: {}\n",self.expected_run_result, self.interesting_results_count).as_bytes()).await?;
-        
-        writer.write_all("----------------------------------\n".as_bytes()).await?;
+    pub async fn print_report<W: AsyncWrite + Unpin>(
+        &self,
+        writer: &mut W,
+    ) -> Result<(), std::io::Error> {
+        writer
+            .write_all(format!("Report for Crater Experiment {}\n", self.experiment).as_bytes())
+            .await?;
+        writer
+            .write_all(
+                format!(
+                    "{} crates: {}\n",
+                    self.expected_krate_result, self.regressed_count
+                )
+                .as_bytes(),
+            )
+            .await?;
+        writer
+            .write_all(
+                format!(
+                    "{} runs: {}\n",
+                    self.expected_run_result, self.interesting_results_count
+                )
+                .as_bytes(),
+            )
+            .await?;
+
+        writer
+            .write_all("----------------------------------\n".as_bytes())
+            .await?;
         writer.write_all("Results:\n".as_bytes()).await?;
 
         for (name, &count) in &self.findings {
-            writer.write_all(format!("{name}: {count}\n").as_bytes()).await?;
+            writer
+                .write_all(format!("{name}: {count}\n").as_bytes())
+                .await?;
         }
 
         let sum: usize = self.findings.values().sum();
-        writer.write_all("----------------------------------\n".as_bytes()).await?;
+        writer
+            .write_all("----------------------------------\n".as_bytes())
+            .await?;
         writer.write_all(format!("sum: {sum}\n").as_bytes()).await?;
-        writer.write_all(format!("others: {}\n", self.other.len()).as_bytes()).await?;
-        writer.write_all("----------------------------------\n".as_bytes()).await?;
-        writer.write_all(format!("{:#?}\n", self.other).as_bytes()).await?;
+        writer
+            .write_all(format!("others: {}\n", self.other.len()).as_bytes())
+            .await?;
+        writer
+            .write_all("----------------------------------\n".as_bytes())
+            .await?;
+        writer
+            .write_all(format!("{:#?}\n", self.other).as_bytes())
+            .await?;
         Ok(())
     }
 }
@@ -452,10 +489,10 @@ struct RunResult {
     log: String,
 }
 
-async fn get_report(expriment: &str) -> Result<Results, AnalysisError> {
-    let result_json_path = format!("./results/{expriment}/results.json");
+async fn get_report(experiment: &str) -> Result<Results, AnalysisError> {
+    let result_json_path = format!("./results/{experiment}/results.json");
     let result_json_url =
-        format!("https://crater-reports.s3.amazonaws.com/{expriment}/results.json");
+        format!("https://crater-reports.s3.amazonaws.com/{experiment}/results.json");
     let results = get_or_download_file(result_json_path.as_ref(), &result_json_url).await?;
     Ok(serde_json::from_str(&results)?)
 }
@@ -464,7 +501,7 @@ async fn get_or_download_file(
     cache_path: &Path,
     download_url: &str,
 ) -> Result<String, AnalysisError> {
-    let resuls = match tokio::fs::read_to_string(cache_path).await {
+    let results = match tokio::fs::read_to_string(cache_path).await {
         Ok(content) => {
             log::debug!("Using cached file");
             content
@@ -481,7 +518,7 @@ async fn get_or_download_file(
             };
 
             log::debug!(
-                "Failed to access cached resuls for {entry}, falling back to downloading: {err}"
+                "Failed to access cached results for {entry}, falling back to downloading: {err}"
             );
             let response = reqwest::get(download_url).await?;
             let content = response.text().await?;
@@ -491,5 +528,5 @@ async fn get_or_download_file(
             content
         }
     };
-    Ok(resuls)
+    Ok(results)
 }
