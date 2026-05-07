@@ -85,22 +85,7 @@ all = ["error: expected newline, `#`"]
 all = ["registry index was not found in any configuration:"]
 
 [[targets."dep removed feature"]]
-all = [
-    "the package ",
-    " depends on ",
-    ", with features: ",
-    " but ",
-    " does not have these features",
-]
-
-[[targets."dep removed feature"]]
-all = [
-    "package ",
-    " depends on ",
-    " with feature ",
-    " but ",
-    " does not have that feature",
-]
+all = ["package ", " depends on ", " with feature", " but ", " does not have"]
 
 [[targets.linker-missing-library]]
 all = ["rust-lld: error: unable to find library"]
