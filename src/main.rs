@@ -308,6 +308,8 @@ async fn run_analysis(
     let parallelism =
         std::thread::available_parallelism().map_or(20, |available| available.get() * 2);
 
+    let _ = multi.println(format!("Using a parallelism value of {parallelism}"));
+
     let mut stream = futures::stream::iter(interesting_runs)
         .map(|(krate_name, run)| {
             let experiment = &experiment;
