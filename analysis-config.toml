@@ -209,3 +209,6 @@ all = ["failed to download from `https://index.crates.io/"]
 
 [[targets.network-error]]
 all = ["this task or one of its parent failed: Io Error: Network is unreachable (os error 101)"]
+
+[[targets.network-error]]
+all = ["this task or one of its parent failed: Tls Error: Connection timed out (os error 110)"]
