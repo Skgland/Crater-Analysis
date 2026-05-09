@@ -1,11 +1,13 @@
 use std::{
-    borrow::Cow, collections::{BTreeMap, HashMap, HashSet}, env::args, io::ErrorKind, path::Path, sync::LazyLock, time::Duration
+    borrow::Cow, collections::{BTreeMap, HashMap, HashSet}, env::args, io::{ErrorKind, Write}, path::Path, sync::LazyLock, time::Duration
 };
 
 use futures::StreamExt as _;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use indicatif_log_bridge::LogWrapper;
-use regex::Regex;
+use memmap2::Mmap;
+use regex::bytes::Regex;
+use tempfile::NamedTempFile;
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufWriter;
@@ -276,9 +278,16 @@ async fn run_analysis<'config>(
     multi: &MultiProgress,
     parallelism: usize,
 ) -> Result<AnalysisReport<'config>, AnalysisError> {
-    if let Err(err) = std::fs::create_dir_all(format!("./results/{experiment}/logs")) {
-        log::warn!("Failed to ensure cache dir exists: {err}");
+    if !std::fs::exists(format!("./results/{experiment}/logs"))? {
+        std::fs::create_dir_all(format!("./results/{experiment}/logs"))?;
     }
+
+    let cachedir_tag = format!("./results/{experiment}/CACHEDIR.TAG");
+
+    if !std::fs::exists(&cachedir_tag)? {
+        std::fs::write(cachedir_tag, CACHEDIR_TAG_CONTENT)?;
+    }
+
 
     report_ps.set_message(format!("Getting Crater Report for {experiment}"));
     report_ps.enable_steady_tick(Duration::from_millis(100));
@@ -369,14 +378,16 @@ async fn run_analysis<'config>(
     })
 }
 
-fn process_log<'config>(config: &'config Config, log: &str) -> HashSet<Cow<'config, str>> {
-    let mut log_findings = HashSet::new();
+fn process_log<'config>(config: &'config Config, log: &[u8]) -> HashSet<Cow<'config, str>> {
+    let mut log_findings = HashSet::<Cow<'config, str>>::new();
 
-    for line in log.lines() {
+
+
+    for line in log.split(|c | matches!(c, b'\r'| b'\n')).filter(|s|!s.is_empty()) {
         for (target_name, targets) in &config.targets {
             if targets
                 .iter()
-                .any(|target| target.all.iter().all(|pat| line.contains(pat)))
+                .any(|target| target.all.iter().all(|pat| contains_bytes(line, pat.as_bytes())))
             {
                 log_findings.insert(Cow::Borrowed(target_name.as_str()));
             }
@@ -385,16 +396,21 @@ fn process_log<'config>(config: &'config Config, log: &str) -> HashSet<Cow<'conf
 
     for needle in ERROR_REGEX.captures_iter(log) {
         if let Some(capture) = needle.get(1) {
-            log_findings.insert(Cow::Owned(capture.as_str().to_string()));
+            let capture = String::from_utf8_lossy(capture.as_bytes()).into_owned();
+            log_findings.insert(Cow::Owned(capture));
         }
     }
 
     log_findings
 }
 
+fn contains_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack.windows(needle.len()).any(|window| window == needle)
+}
+
 
 static ERROR_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    regex::RegexBuilder::new(r#"^\[INFO\] \[stdout\] error\[(E\d+)\]:"#)
+    regex::bytes::RegexBuilder::new(r#"^\[INFO\] \[stdout\] error\[(E\d+)\]:"#)
         .multi_line(true)
         .build()
         .unwrap()
@@ -467,18 +483,6 @@ impl AnalysisReport<'_> {
     }
 }
 
-async fn get_log(experiment: &str, log: &str) -> Result<String, AnalysisError> {
-    let mut log_folder = format!("results/{experiment}/logs/{log}/");
-    log_folder = log_folder.replace("./", "/dot/").trim_end_matches('/').to_string();
-
-    if let Err(err) = tokio::fs::create_dir_all(&log_folder).await {
-        log::warn!("Failed to create cache folder: {err}");
-    }
-    let log_path = format!("{log_folder}/log.txt");
-    let log_url = format!("https://crater-reports.s3.amazonaws.com/{experiment}/{log}/log.txt");
-
-    get_or_download_file(log_path.as_ref(), &log_url).await
-}
 
 #[derive(serde::Deserialize)]
 struct Results {
@@ -500,44 +504,72 @@ struct RunResult {
     log: String,
 }
 
+const CACHEDIR_TAG_CONTENT: &str = "\
+Signature: 8a477f597d28d172789f06886806bc55
+# This file is a cache directory tag created by https://github.com/Skgland/Crater-Analysis
+# For information about cache directory tags, see:
+#	http://www.brynosaurus.com/cachedir/
+";
+
 async fn get_report(experiment: &str) -> Result<Results, AnalysisError> {
     let result_json_path = format!("./results/{experiment}/results.json");
     let result_json_url =
         format!("https://crater-reports.s3.amazonaws.com/{experiment}/results.json");
     let results = get_or_download_file(result_json_path.as_ref(), &result_json_url).await?;
-    Ok(serde_json::from_str(&results)?)
+    Ok(serde_json::from_slice(&results)?)
+}
+
+
+async fn get_log(experiment: &str, log: &str) -> Result<Mmap, AnalysisError> {
+    let mut log_folder = format!("results/{experiment}/logs/{log}/");
+    log_folder = log_folder.replace("./", "/dot/").trim_end_matches('/').to_string();
+
+    if let Err(err) = tokio::fs::create_dir_all(&log_folder).await {
+        log::warn!("Failed to create cache folder: {err}");
+    }
+    let log_path = format!("{log_folder}/log.txt");
+    let log_url = format!("https://crater-reports.s3.amazonaws.com/{experiment}/{log}/log.txt");
+
+    get_or_download_file(log_path.as_ref(), &log_url).await
 }
 
 async fn get_or_download_file(
     cache_path: &Path,
     download_url: &str,
-) -> Result<String, AnalysisError> {
-    let results = match tokio::fs::read_to_string(cache_path).await {
-        Ok(content) => {
-            log::debug!("Using cached file");
-            content
-        }
-        Err(err) => {
-            let entry = if let Some(parent) = cache_path.parent() {
-                if let Some(name) = parent.file_name() {
-                    name.to_string_lossy().into_owned()
-                } else {
-                    "parent-has-no-name".to_string()
-                }
-            } else {
-                "no-parent".to_string()
-            };
+) -> Result<Mmap, AnalysisError> {
 
-            log::debug!(
-                "Failed to access cached results for {entry}, falling back to downloading: {err}"
-            );
-            let response = reqwest::get(download_url).await?;
-            let content = response.text().await?;
-            if let Err(err) = tokio::fs::write(cache_path, &content).await {
+    let file = if !tokio::fs::try_exists(cache_path).await? {
+        let parent = cache_path.parent().unwrap();
+        let entry = if let Some(name) = parent.file_name() {
+            name.to_string_lossy().into_owned()
+        } else {
+            "parent-has-no-name".to_string()
+        };
+
+        log::debug!(
+            "Failed to access cached results for {entry}, falling back to downloading"
+        );
+
+        let response = reqwest::get(download_url).await?.bytes().await?;
+
+        let mut tempfile = NamedTempFile::new_in(parent)?;
+
+        let tempfile = match tokio::task::spawn_blocking(move || {
+            tempfile.write_all(&response).map(|_|tempfile)
+        }).await.unwrap() {
+            Ok(tempfile) => {tempfile},
+            Err(err) => {
                 log::warn!("Failed to cache result to {cache_path:?}: {err}");
-            }
-            content
-        }
+                return Err(err.into());
+            },
+        };
+
+        tempfile.persist(cache_path).map_err(std::io::Error::from)?
+    } else {
+        std::fs::File::open(cache_path)?
     };
-    Ok(results)
+
+
+    Ok(unsafe { Mmap::map(&file)?})
+
 }
