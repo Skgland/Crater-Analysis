@@ -230,7 +230,7 @@ async fn main() -> Result<(), AnalysisError> {
     };
 
     let parallelism =
-        std::thread::available_parallelism().map_or(20, |available| available.get() * 2);
+        std::thread::available_parallelism().map_or(20, |available| available.get());
 
     log::info!("Using a parallelism value of {parallelism}");
 
@@ -320,27 +320,28 @@ async fn run_analysis<'config>(
                         None
                     }
                     Ok(log) => {
-                        let run_findings = process_log(config, &log);
-                        Some((krate_name, run, run_findings))
+                        Some((krate_name, run, log))
                     }
                 }
             }
         })
-        .buffer_unordered(parallelism);
+        .buffer_unordered(parallelism)
+        .filter_map(std::future::ready)
+        .map(|(krate_name, run, log)| async move {
+            let log = log;
+            let run_findings = process_log(config, &log);
+            (krate_name, run, run_findings)
+        }).buffer_unordered(parallelism);
 
     let mut findings = BTreeMap::<Cow<str>, usize>::new();
 
-    while let Some(res) = stream.next().await {
-        if let Some((krate_name, run, log_findings)) = res{
+    while let Some((krate_name, run, log_findings)) = stream.next().await {
+        if log_findings.is_empty() {
+            other.push((krate_name, &run.log));
+        }
 
-            if log_findings.is_empty() {
-                other.push((krate_name, &run.log));
-            }
-
-            for finding in log_findings {
-                *findings.entry(finding).or_default() += 1;
-            }
-
+        for finding in log_findings {
+            *findings.entry(finding).or_default() += 1;
         }
 
         run_pb.inc(1);
