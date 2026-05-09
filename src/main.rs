@@ -1,14 +1,11 @@
 use std::{
-    collections::{BTreeMap, HashMap},
-    env::args,
-    io::ErrorKind,
-    path::Path,
-    time::Duration,
+    borrow::Cow, collections::{BTreeMap, HashMap, HashSet}, env::args, io::ErrorKind, path::Path, sync::LazyLock, time::Duration
 };
 
 use futures::StreamExt as _;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use indicatif_log_bridge::LogWrapper;
+use regex::Regex;
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
 use tokio::io::BufWriter;
@@ -272,13 +269,13 @@ async fn main() -> Result<(), AnalysisError> {
     Ok(())
 }
 
-async fn run_analysis(
-    config: &Config,
+async fn run_analysis<'config>(
+    config: &'config Config,
     experiment: &str,
     report_ps: &ProgressBar,
     multi: &MultiProgress,
     parallelism: usize,
-) -> Result<AnalysisReport, AnalysisError> {
+) -> Result<AnalysisReport<'config>, AnalysisError> {
     if let Err(err) = std::fs::create_dir_all(format!("./results/{experiment}/logs")) {
         log::warn!("Failed to ensure cache dir exists: {err}");
     }
@@ -322,17 +319,12 @@ async fn run_analysis(
         })
         .buffer_unordered(parallelism);
 
-    let mut findings = BTreeMap::<String, usize>::new();
-
-    let error_regex = regex::RegexBuilder::new(r#"^\[INFO\] \[stdout\] error\[(E\d+)\]:"#)
-        .multi_line(true)
-        .build()
-        .unwrap();
+    let mut findings = BTreeMap::<Cow<str>, usize>::new();
 
     while let Some((krate_name, run, log)) = stream.next().await {
         match log {
             Ok(log) => {
-                let mut has_reason = false;
+                let mut log_findings = HashSet::new();
 
                 for line in log.lines() {
                     for (target_name, targets) in &config.targets {
@@ -340,21 +332,23 @@ async fn run_analysis(
                             .iter()
                             .any(|target| target.all.iter().all(|pat| line.contains(pat)))
                         {
-                            *findings.entry(target_name.into()).or_default() += 1;
-                            has_reason = true;
+                            log_findings.insert(Cow::Borrowed(target_name.as_str()));
                         }
                     }
                 }
 
-                for needle in error_regex.captures_iter(&log) {
+                for needle in ERROR_REGEX.captures_iter(&log) {
                     if let Some(capture) = needle.get(1) {
-                        *findings.entry(capture.as_str().to_string()).or_default() += 1;
-                        has_reason = true;
+                        log_findings.insert(Cow::Owned(capture.as_str().to_string()));
                     }
                 }
 
-                if !has_reason {
+                if log_findings.is_empty() {
                     other.push((krate_name, &run.log));
+                }
+
+                for finding in log_findings {
+                    *findings.entry(finding).or_default() += 1;
                 }
             }
 
@@ -388,17 +382,26 @@ async fn run_analysis(
     })
 }
 
-struct AnalysisReport {
+
+static ERROR_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    regex::RegexBuilder::new(r#"^\[INFO\] \[stdout\] error\[(E\d+)\]:"#)
+        .multi_line(true)
+        .build()
+        .unwrap()
+});
+
+
+struct AnalysisReport<'config> {
     experiment: String,
     expected_krate_result: String,
     expected_run_result: String,
     regressed_count: usize,
     interesting_results_count: usize,
-    findings: BTreeMap<String, usize>,
+    findings: BTreeMap<Cow<'config, str>, usize>,
     other: BTreeMap<String, Vec<String>>,
 }
 
-impl AnalysisReport {
+impl AnalysisReport<'_> {
     pub async fn print_report<W: AsyncWrite + Unpin>(
         &self,
         writer: &mut W,
