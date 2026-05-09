@@ -314,47 +314,33 @@ async fn run_analysis<'config>(
             let experiment = &experiment;
             async move {
                 let log = get_log(experiment, &run.log).await;
-                (krate_name, run, log)
+                match log {
+                    Err(err) => {
+                        log::warn!("Failed to get log '{}': {err}", run.log);
+                        None
+                    }
+                    Ok(log) => {
+                        let run_findings = process_log(config, &log);
+                        Some((krate_name, run, run_findings))
+                    }
+                }
             }
         })
         .buffer_unordered(parallelism);
 
     let mut findings = BTreeMap::<Cow<str>, usize>::new();
 
-    while let Some((krate_name, run, log)) = stream.next().await {
-        match log {
-            Ok(log) => {
-                let mut log_findings = HashSet::new();
+    while let Some(res) = stream.next().await {
+        if let Some((krate_name, run, log_findings)) = res{
 
-                for line in log.lines() {
-                    for (target_name, targets) in &config.targets {
-                        if targets
-                            .iter()
-                            .any(|target| target.all.iter().all(|pat| line.contains(pat)))
-                        {
-                            log_findings.insert(Cow::Borrowed(target_name.as_str()));
-                        }
-                    }
-                }
-
-                for needle in ERROR_REGEX.captures_iter(&log) {
-                    if let Some(capture) = needle.get(1) {
-                        log_findings.insert(Cow::Owned(capture.as_str().to_string()));
-                    }
-                }
-
-                if log_findings.is_empty() {
-                    other.push((krate_name, &run.log));
-                }
-
-                for finding in log_findings {
-                    *findings.entry(finding).or_default() += 1;
-                }
+            if log_findings.is_empty() {
+                other.push((krate_name, &run.log));
             }
 
-            Err(err) => {
-                log::warn!("Failed to get log '{}': {err}", run.log);
+            for finding in log_findings {
+                *findings.entry(finding).or_default() += 1;
             }
+
         }
 
         run_pb.inc(1);
@@ -380,6 +366,29 @@ async fn run_analysis<'config>(
         expected_krate_result: config.crate_result.clone(),
         expected_run_result: config.run_result.clone(),
     })
+}
+
+fn process_log<'config>(config: &'config Config, log: &str) -> HashSet<Cow<'config, str>> {
+    let mut log_findings = HashSet::new();
+
+    for line in log.lines() {
+        for (target_name, targets) in &config.targets {
+            if targets
+                .iter()
+                .any(|target| target.all.iter().all(|pat| line.contains(pat)))
+            {
+                log_findings.insert(Cow::Borrowed(target_name.as_str()));
+            }
+        }
+    }
+
+    for needle in ERROR_REGEX.captures_iter(log) {
+        if let Some(capture) = needle.get(1) {
+            log_findings.insert(Cow::Owned(capture.as_str().to_string()));
+        }
+    }
+
+    log_findings
 }
 
 
