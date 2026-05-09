@@ -1,5 +1,5 @@
 use std::{
-    borrow::Cow, collections::{BTreeMap, HashMap, HashSet}, env::args, io::{ErrorKind, Write}, path::Path, sync::LazyLock, time::Duration
+    collections::{BTreeMap, HashMap, HashSet}, env::args, io::{ErrorKind, Write}, path::Path, sync::{Arc, LazyLock}, time::Duration
 };
 
 use futures::StreamExt as _;
@@ -211,7 +211,7 @@ async fn main() -> Result<(), AnalysisError> {
     LogWrapper::new(multi.clone(), logger).try_init().unwrap();
 
     let config_path = "./analysis-config.toml";
-    let config = match std::fs::read_to_string(config_path) {
+    let config = Arc::new(match std::fs::read_to_string(config_path) {
         Ok(content) => match toml::from_str::<Config>(&content) {
             Ok(content) => content,
             Err(err) => {
@@ -229,7 +229,7 @@ async fn main() -> Result<(), AnalysisError> {
         Err(err) => {
             return Err(AnalysisError::Io(err));
         }
-    };
+    });
 
     let parallelism =
         std::thread::available_parallelism().map_or(20, |available| available.get());
@@ -271,13 +271,13 @@ async fn main() -> Result<(), AnalysisError> {
     Ok(())
 }
 
-async fn run_analysis<'config>(
-    config: &'config Config,
+async fn run_analysis(
+    config: &Arc<Config>,
     experiment: &str,
     report_ps: &ProgressBar,
     multi: &MultiProgress,
     parallelism: usize,
-) -> Result<AnalysisReport<'config>, AnalysisError> {
+) -> Result<AnalysisReport, AnalysisError> {
     if !std::fs::exists(format!("./results/{experiment}/logs"))? {
         std::fs::create_dir_all(format!("./results/{experiment}/logs"))?;
     }
@@ -337,12 +337,12 @@ async fn run_analysis<'config>(
         .buffer_unordered(parallelism)
         .filter_map(std::future::ready)
         .map(|(krate_name, run, log)| async move {
-            let log = log;
-            let run_findings = process_log(config, &log);
+            let config = config.clone();
+            let run_findings = tokio::task::spawn_blocking(move ||{process_log(&config, &log)}).await.unwrap();
             (krate_name, run, run_findings)
         }).buffer_unordered(parallelism);
 
-    let mut findings = BTreeMap::<Cow<str>, usize>::new();
+    let mut findings = BTreeMap::new();
 
     while let Some((krate_name, run, log_findings)) = stream.next().await {
         if log_findings.is_empty() {
@@ -378,8 +378,8 @@ async fn run_analysis<'config>(
     })
 }
 
-fn process_log<'config>(config: &'config Config, log: &[u8]) -> HashSet<Cow<'config, str>> {
-    let mut log_findings = HashSet::<Cow<'config, str>>::new();
+fn process_log(config: &Config, log: &[u8]) -> HashSet<String> {
+    let mut log_findings = HashSet::new();
 
 
 
@@ -389,15 +389,14 @@ fn process_log<'config>(config: &'config Config, log: &[u8]) -> HashSet<Cow<'con
                 .iter()
                 .any(|target| target.all.iter().all(|pat| contains_bytes(line, pat.as_bytes())))
             {
-                log_findings.insert(Cow::Borrowed(target_name.as_str()));
+                log_findings.insert(target_name.clone());
             }
         }
     }
 
     for needle in ERROR_REGEX.captures_iter(log) {
         if let Some(capture) = needle.get(1) {
-            let capture = String::from_utf8_lossy(capture.as_bytes()).into_owned();
-            log_findings.insert(Cow::Owned(capture));
+            log_findings.insert(String::from_utf8_lossy(capture.as_bytes()).into_owned());
         }
     }
 
@@ -417,17 +416,17 @@ static ERROR_REGEX: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 
-struct AnalysisReport<'config> {
+struct AnalysisReport {
     experiment: String,
     expected_krate_result: String,
     expected_run_result: String,
     regressed_count: usize,
     interesting_results_count: usize,
-    findings: BTreeMap<Cow<'config, str>, usize>,
+    findings: BTreeMap<String, usize>,
     other: BTreeMap<String, Vec<String>>,
 }
 
-impl AnalysisReport<'_> {
+impl AnalysisReport {
     pub async fn print_report<W: AsyncWrite + Unpin>(
         &self,
         writer: &mut W,
