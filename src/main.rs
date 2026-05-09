@@ -24,6 +24,9 @@ enum AnalysisError {
     MissingConfig,
 }
 
+
+static APP_USER_AGENT : &str= concat!(env!("CARGO_PKG_NAME"), "/", env!("CARGO_PKG_VERSION"), " (https://github.com/Skgland/Crater-Analysis)");
+
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone)]
 struct Config {
     crate_result: String,
@@ -237,7 +240,7 @@ async fn main() -> Result<(), AnalysisError> {
 
     log::info!("Using a parallelism value of {parallelism}");
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder().user_agent(APP_USER_AGENT).build().unwrap();
 
     let reports = futures::stream::iter(args().skip(1))
         .map(|experiment| {
