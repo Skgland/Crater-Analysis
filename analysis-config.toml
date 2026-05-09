@@ -19,6 +19,16 @@ all = [
     "this task or one of its parent failed: Status code 500 Internal Server Error indicates failure"
 ]
 
+[[targets."connection reset by peer"]]
+all = [
+    "this task or one of its parent failed: Tls Error: Connection reset by peer (os error 104)"
+]
+
+[[targets."connection reset by peer"]]
+all = [
+    "this task or one of its parent failed: Io Error: Connection reset by peer (os error 104)"
+]
+
 [[targets."checksum mismatch"]]
 all = ["error: checksum for ", " changed between lock files"]
 
@@ -183,5 +193,19 @@ all = [
     "` points to the same source, but patches must point to different sources",
 ]
 
+[[targets."invalid patch"]]
+all = [
+    "error: patch for `",
+    "` points to the same source, but patches must point to different sources"
+]
+
+[[targets."invalid patch"]]
+all = [
+    "error: patch location `", "` does not contain packages matching `", "`"
+]
+
 [[targets.network-error]]
 all = ["failed to download from `https://index.crates.io/"]
+
+[[targets.network-error]]
+all = ["this task or one of its parent failed: Io Error: Network is unreachable (os error 101)"]
