@@ -7,6 +7,7 @@ use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use indicatif_log_bridge::LogWrapper;
 use memmap2::Mmap;
 use regex::bytes::Regex;
+use reqwest::Client;
 use tempfile::NamedTempFile;
 use tokio::io::AsyncWrite;
 use tokio::io::AsyncWriteExt;
@@ -236,14 +237,17 @@ async fn main() -> Result<(), AnalysisError> {
 
     log::info!("Using a parallelism value of {parallelism}");
 
+    let client = reqwest::Client::new();
+
     let reports = futures::stream::iter(args().skip(1))
         .map(|experiment| {
             let multi = multi.clone();
             let config = config.clone();
+            let client = client.clone();
             async move {
                 let report_ps = multi.add(ProgressBar::new_spinner());
                 let report =
-                    run_analysis(&config, &experiment, &report_ps, &multi, parallelism).await?;
+                    run_analysis(&config, &client, &experiment, &report_ps, &multi, parallelism).await?;
                 report_ps.set_message(format!(
                     "Writing report for experiment {}",
                     report.experiment
@@ -273,6 +277,7 @@ async fn main() -> Result<(), AnalysisError> {
 
 async fn run_analysis(
     config: &Arc<Config>,
+    client: &Client,
     experiment: &str,
     report_ps: &ProgressBar,
     multi: &MultiProgress,
@@ -285,7 +290,7 @@ async fn run_analysis(
 
     report_ps.set_message(format!("Getting Crater Report for {experiment}"));
     report_ps.enable_steady_tick(Duration::from_millis(100));
-    let report = get_report(experiment).await?;
+    let report = get_report(client, experiment).await?;
     report_ps.set_message(format!("Processing Crater Report for {experiment}"));
 
     let mut other = Vec::new();
@@ -316,7 +321,7 @@ async fn run_analysis(
         .map(|(krate_name, run)| {
             let experiment = &experiment;
             async move {
-                let log = get_log(experiment, &run.log).await;
+                let log = get_log(client, experiment, &run.log).await;
                 match log {
                     Err(err) => {
                         log::warn!("Failed to get log '{}': {err}", run.log);
@@ -502,16 +507,16 @@ Signature: 8a477f597d28d172789f06886806bc55
 #	http://www.brynosaurus.com/cachedir/
 ";
 
-async fn get_report(experiment: &str) -> Result<Results, AnalysisError> {
+async fn get_report(client: &Client, experiment: &str) -> Result<Results, AnalysisError> {
     let result_json_path = format!("results/{experiment}/results.json");
     let result_json_url =
         format!("https://crater-reports.s3.amazonaws.com/{experiment}/results.json");
-    let results = get_or_download_file(result_json_path.as_ref(), &result_json_url).await?;
+    let results = get_or_download_file(client, result_json_path.as_ref(), &result_json_url).await?;
     Ok(serde_json::from_slice(&results)?)
 }
 
 
-async fn get_log(experiment: &str, log: &str) -> Result<Mmap, AnalysisError> {
+async fn get_log(client: &Client, experiment: &str, log: &str) -> Result<Mmap, AnalysisError> {
     let mut log_folder = format!("results/{experiment}/logs/{log}/");
     log_folder = log_folder.replace("./", "/dot/").trim_end_matches('/').to_string();
 
@@ -521,10 +526,11 @@ async fn get_log(experiment: &str, log: &str) -> Result<Mmap, AnalysisError> {
     let log_path = format!("{log_folder}/log.txt");
     let log_url = format!("https://crater-reports.s3.amazonaws.com/{experiment}/{log}/log.txt");
 
-    get_or_download_file(log_path.as_ref(), &log_url).await
+    get_or_download_file(client, log_path.as_ref(), &log_url).await
 }
 
 async fn get_or_download_file(
+    client: &Client,
     cache_path: &Path,
     download_url: &str,
 ) -> Result<Mmap, AnalysisError> {
@@ -541,7 +547,8 @@ async fn get_or_download_file(
             "Failed to access cached results for {entry}, falling back to downloading"
         );
 
-        let mut response = reqwest::get(download_url).await?;
+
+        let mut response = client.get(download_url).send().await?;
 
         let mut tempfile = NamedTempFile::new_in(parent)?;
 
