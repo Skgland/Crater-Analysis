@@ -219,7 +219,7 @@ async fn main() -> Result<(), AnalysisError> {
         Ok(content) => match toml::from_str::<Config>(&content) {
             Ok(content) => content,
             Err(err) => {
-                println!("Failed to load config '{config_path}': {err}");
+                println!("Failed to deserialize config '{config_path}': {err}");
                 return Err(AnalysisError::TomlDeserialization(err));
             }
         },
