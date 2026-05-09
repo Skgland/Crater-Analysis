@@ -545,6 +545,11 @@ async fn get_or_download_file(
 
         let mut tempfile = NamedTempFile::new_in(parent)?;
 
+        if let Some(len) = response.content_length() {
+            // try to pre-size the file
+            let _ = tempfile.as_file().set_len(len);
+        }
+
         while let Some(chunk) = response.chunk().await? {
             tempfile = match tokio::task::spawn_blocking(move || tempfile.write_all(&chunk).map(|_|tempfile)).await.unwrap() {
                 Err(err) => {
