@@ -14,6 +14,11 @@ all = [
     "this task or one of its parent failed: Status code 403 Forbidden indicates failure",
 ]
 
+[[targets."status code 500 internal server error"]]
+all = [
+    "this task or one of its parent failed: Status code 500 Internal Server Error indicates failure"
+]
+
 [[targets."checksum mismatch"]]
 all = ["error: checksum for ", " changed between lock files"]
 
