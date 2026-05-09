@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet}, env::args, io::{ErrorKind, Write}, path::Path, sync::{Arc, LazyLock}, time::Duration
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet}, env::args, io::{ErrorKind, Write}, path::Path, sync::{Arc, LazyLock}, time::Duration
 };
 
 use futures::StreamExt as _;
@@ -243,7 +243,9 @@ async fn main() -> Result<(), AnalysisError> {
 
     let client = reqwest::Client::builder().user_agent(APP_USER_AGENT).build().unwrap();
 
-    let reports = futures::stream::iter(args().skip(1))
+    let experiments = BTreeSet::from_iter(args().skip(1));
+
+    let reports = futures::stream::iter(experiments)
         .map(|experiment| {
             let multi = multi.clone();
             let config = config.clone();
@@ -268,7 +270,7 @@ async fn main() -> Result<(), AnalysisError> {
                 Ok(())
             }
         })
-        .buffered(5)
+        .buffer_unordered(5)
         .collect::<Vec<Result<_, AnalysisError>>>()
         .await;
 
