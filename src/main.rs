@@ -210,7 +210,7 @@ async fn main() -> Result<(), AnalysisError> {
     let multi = MultiProgress::new();
     LogWrapper::new(multi.clone(), logger).try_init().unwrap();
 
-    let config_path = "./analysis-config.toml";
+    let config_path = "analysis-config.toml";
     let config = Arc::new(match std::fs::read_to_string(config_path) {
         Ok(content) => match toml::from_str::<Config>(&content) {
             Ok(content) => content,
@@ -278,16 +278,10 @@ async fn run_analysis(
     multi: &MultiProgress,
     parallelism: usize,
 ) -> Result<AnalysisReport, AnalysisError> {
-    if !std::fs::exists(format!("./results/{experiment}/logs"))? {
-        std::fs::create_dir_all(format!("./results/{experiment}/logs"))?;
+    if !std::fs::exists(format!("results/{experiment}"))? {
+        std::fs::create_dir_all(format!("results/{experiment}"))?;
+        std::fs::write(format!("results/{experiment}/CACHEDIR.TAG"), CACHEDIR_TAG_CONTENT)?;
     }
-
-    let cachedir_tag = format!("./results/{experiment}/CACHEDIR.TAG");
-
-    if !std::fs::exists(&cachedir_tag)? {
-        std::fs::write(cachedir_tag, CACHEDIR_TAG_CONTENT)?;
-    }
-
 
     report_ps.set_message(format!("Getting Crater Report for {experiment}"));
     report_ps.enable_steady_tick(Duration::from_millis(100));
@@ -380,8 +374,6 @@ async fn run_analysis(
 
 fn process_log(config: &Config, log: &[u8]) -> HashSet<String> {
     let mut log_findings = HashSet::new();
-
-
 
     for line in log.split(|c | matches!(c, b'\r'| b'\n')).filter(|s|!s.is_empty()) {
         for (target_name, targets) in &config.targets {
@@ -511,7 +503,7 @@ Signature: 8a477f597d28d172789f06886806bc55
 ";
 
 async fn get_report(experiment: &str) -> Result<Results, AnalysisError> {
-    let result_json_path = format!("./results/{experiment}/results.json");
+    let result_json_path = format!("results/{experiment}/results.json");
     let result_json_url =
         format!("https://crater-reports.s3.amazonaws.com/{experiment}/results.json");
     let results = get_or_download_file(result_json_path.as_ref(), &result_json_url).await?;
@@ -549,19 +541,19 @@ async fn get_or_download_file(
             "Failed to access cached results for {entry}, falling back to downloading"
         );
 
-        let response = reqwest::get(download_url).await?.bytes().await?;
+        let mut response = reqwest::get(download_url).await?;
 
         let mut tempfile = NamedTempFile::new_in(parent)?;
 
-        let tempfile = match tokio::task::spawn_blocking(move || {
-            tempfile.write_all(&response).map(|_|tempfile)
-        }).await.unwrap() {
-            Ok(tempfile) => {tempfile},
-            Err(err) => {
-                log::warn!("Failed to cache result to {cache_path:?}: {err}");
-                return Err(err.into());
-            },
-        };
+        while let Some(chunk) = response.chunk().await? {
+            tempfile = match tokio::task::spawn_blocking(move || tempfile.write_all(&chunk).map(|_|tempfile)).await.unwrap() {
+                Err(err) => {
+                    log::warn!("Failed to cache result to {cache_path:?}: {err}");
+                    return Err(err.into());
+                }
+                Ok(tempfile) => tempfile,
+            };
+        }
 
         tempfile.persist(cache_path).map_err(std::io::Error::from)?
     } else {
