@@ -239,6 +239,7 @@ async fn main() -> Result<(), AnalysisError> {
         std::thread::available_parallelism().map_or(20, |available| available.get());
 
     log::info!("Using a parallelism value of {parallelism}");
+    log::info!("User-Agent: {APP_USER_AGENT}");
 
     let client = reqwest::Client::builder().user_agent(APP_USER_AGENT).build().unwrap();
 
