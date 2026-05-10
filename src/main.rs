@@ -256,8 +256,7 @@ async fn main() -> Result<(), AnalysisError> {
 
     let experiments = BTreeSet::from_iter(args().skip(1));
 
-    let experiments_pb = multi.add(ProgressBar::new(experiments.len() as u64));
-    experiments_pb.set_message("Processing experiments");
+    let experiments_pb = multi.add(ProgressBar::new(experiments.len() as u64).with_message("Processing experiments"));
     experiments_pb.set_style(
         ProgressStyle::with_template("{msg} {wide_bar} {human_pos}/{human_len}").unwrap(),
     );
@@ -324,7 +323,7 @@ async fn run_analysis(
 
     report_ps.set_message(format!("Getting Crater Report for {experiment}"));
     report_ps.enable_steady_tick(Duration::from_millis(100));
-    let report = get_report(client, experiment).await?;
+    let report = get_report(client, multi, experiment).await?;
     report_ps.set_message(format!("Processing Crater Report for {experiment}"));
 
     let mut other = Vec::new();
@@ -348,14 +347,14 @@ async fn run_analysis(
             .with_message(format!("Processing logs for {experiment}")),
     );
     run_pb.set_style(
-        ProgressStyle::with_template("{msg} {wide_bar} {human_pos}/{human_len}").unwrap(),
+        ProgressStyle::with_template("{msg} {wide_bar} {human_pos}/{human_len} ETA {eta_precise}").unwrap(),
     );
 
     let mut stream = futures::stream::iter(interesting_runs)
         .map(|(krate_name, run)| {
             let experiment = &experiment;
             async move {
-                let log = get_log(client, experiment, &run.log).await;
+                let log = get_log(client, multi, experiment, &run.log).await;
                 match log {
                     Err(err) => {
                         log::warn!("Failed to get log '{}': {err}", run.log);
@@ -390,8 +389,7 @@ async fn run_analysis(
         run_pb.inc(1);
     }
 
-    run_pb.finish_and_clear();
-    report_ps.finish_with_message(format!("Processed Crated Report for {experiment}"));
+    report_ps.set_message(format!("Processed Crated Report for {experiment}"));
 
     Ok(AnalysisReport {
         experiment: experiment.to_string(),
@@ -546,15 +544,15 @@ Signature: 8a477f597d28d172789f06886806bc55
 #	http://www.brynosaurus.com/cachedir/
 ";
 
-async fn get_report(client: &Client, experiment: &str) -> Result<Results, AnalysisError> {
+async fn get_report(client: &Client, multi: &MultiProgress, experiment: &str) -> Result<Results, AnalysisError> {
     let result_json_path = format!("results/{experiment}/results.json");
     let result_json_url =
         format!("https://crater-reports.s3.amazonaws.com/{experiment}/results.json");
-    let results = get_or_download_file(client, result_json_path.as_ref(), &result_json_url).await?;
+    let results = get_or_download_file(client, multi, result_json_path.as_ref(), &result_json_url).await?;
     Ok(serde_json::from_slice(&results)?)
 }
 
-async fn get_log(client: &Client, experiment: &str, log: &str) -> Result<Mmap, AnalysisError> {
+async fn get_log(client: &Client, multi: &MultiProgress, experiment: &str, log: &str) -> Result<Mmap, AnalysisError> {
     let mut log_folder = format!("results/{experiment}/logs/{log}/");
     log_folder = log_folder
         .replace("./", "/dot/")
@@ -567,11 +565,12 @@ async fn get_log(client: &Client, experiment: &str, log: &str) -> Result<Mmap, A
     let log_path = format!("{log_folder}/log.txt");
     let log_url = format!("https://crater-reports.s3.amazonaws.com/{experiment}/{log}/log.txt");
 
-    get_or_download_file(client, log_path.as_ref(), &log_url).await
+    get_or_download_file(client, multi, log_path.as_ref(), &log_url).await
 }
 
 async fn get_or_download_file(
     client: &Client,
+    multi: &MultiProgress,
     cache_path: &Path,
     download_url: &str,
 ) -> Result<Mmap, AnalysisError> {
@@ -589,14 +588,23 @@ async fn get_or_download_file(
 
         let mut tempfile = NamedTempFile::new_in(parent)?;
 
+        let download_pb = multi.add(ProgressBar::no_length().with_message(format!("Downloading {download_url}")));
+        download_pb.set_style(
+            ProgressStyle::with_template("{msg} {wide_bar} {binary_bytes}/{binary_total_bytes} {binary_bytes_per_sec} ETA {eta_precise}").unwrap(),
+        );
+
         if let Some(len) = response.content_length() {
-            // try to pre-size the file
+            download_pb.set_length(len);
             let _ = tempfile.as_file().set_len(len);
         }
 
         while let Some(chunk) = response.chunk().await? {
-            tempfile = match tokio::task::spawn_blocking(move || {
-                tempfile.write_all(&chunk).map(|_| tempfile)
+            tempfile = match tokio::task::spawn_blocking({
+                let download_pb = download_pb.clone();
+                move || {
+                    download_pb.inc(chunk.len() as u64);
+                    tempfile.write_all(&chunk).map(|_| tempfile)
+                }
             })
             .await
             .unwrap()
