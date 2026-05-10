@@ -266,14 +266,13 @@ async fn main() -> Result<(), AnalysisError> {
                     "Writing report for experiment {}",
                     report.experiment
                 ));
-                let path = format!("{}.report", report.experiment);
+                let path = format!("results/{experiment}/{experiment}.report");
                 let file = tokio::fs::File::create(&path).await?;
                 let mut buffered = BufWriter::new(file);
                 report.print_report(&mut buffered).await?;
                 buffered.flush().await?;
                 report_ps.finish_with_message(format!(
-                    "Report for {} written to '{path}'",
-                    report.experiment
+                    "Report for {experiment} written to '{path}'"
                 ));
                 experiments_pb.inc(1);
                 Ok(())
