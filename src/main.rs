@@ -245,11 +245,19 @@ async fn main() -> Result<(), AnalysisError> {
 
     let experiments = BTreeSet::from_iter(args().skip(1));
 
+    let experiments_pb = multi.add(ProgressBar::new(experiments.len() as u64));
+    experiments_pb.set_message("Processing experiments");
+    experiments_pb.set_style(
+        ProgressStyle::with_template("{msg} {wide_bar} {human_pos}/{human_len}").unwrap(),
+    );
+
     let reports = futures::stream::iter(experiments)
         .map(|experiment| {
             let multi = multi.clone();
             let config = config.clone();
             let client = client.clone();
+            let experiments_pb = experiments_pb.clone();
+
             async move {
                 let report_ps = multi.add(ProgressBar::new_spinner());
                 let report =
@@ -267,6 +275,7 @@ async fn main() -> Result<(), AnalysisError> {
                     "Report for {} written to '{path}'",
                     report.experiment
                 ));
+                experiments_pb.inc(1);
                 Ok(())
             }
         })
